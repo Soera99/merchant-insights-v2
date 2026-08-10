@@ -6,11 +6,13 @@ its own repository factory and set:
     DASHBOARD_REPOSITORY_FACTORY=package.module:create_repository
 
 The returned object must implement the methods in ``DashboardRepository``.
-All methods receive the selected dashboard date range.
+All business-data methods receive one ``DashboardFilters`` object so a future
+backend can apply province, city, and date conditions consistently.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 from importlib import import_module
 import os
@@ -19,44 +21,58 @@ from typing import Protocol, runtime_checkable
 import pandas as pd
 
 
+# -----------------------------------------------------------------------------
+# Filter model
+# This immutable object is the single filter contract shared by UI and backend.
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class DashboardFilters:
+    province: str
+    city: str
+    start_date: date
+    end_date: date
+
+
+# -----------------------------------------------------------------------------
+# Repository interface
+# Backend teams implement this protocol using SQL, an API, or a data warehouse.
+# -----------------------------------------------------------------------------
 @runtime_checkable
 class DashboardRepository(Protocol):
     """Contract implemented by mock, SQL, warehouse, or API repositories."""
 
-    def load_kpi_data(
-        self,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame: ...
+    def load_filter_options(self) -> dict[str, list[str]]: ...
+
+    def load_kpi_data(self, filters: DashboardFilters) -> pd.DataFrame: ...
 
     def load_dashboard_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
+
+    def load_campaign_performance_data(
+        self,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
 
     def load_product_performance_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ...
 
     def load_product_detail_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame]: ...
 
     def load_merchant_performance_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ...
 
     def load_customer_insights_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[
         pd.DataFrame,
         dict[str, float | str],
@@ -65,36 +81,67 @@ class DashboardRepository(Protocol):
     ]: ...
 
 
+# -----------------------------------------------------------------------------
+# Demo repository
+# This keeps the dashboard usable before the internal database is connected.
+# -----------------------------------------------------------------------------
 class MockDashboardRepository:
     """Current demo dataset; replace with a backend repository in production."""
 
-    def load_kpi_data(
-        self,
-        start_date: date,
-        end_date: date,
-    ) -> pd.DataFrame:
-        del start_date, end_date
+    def load_filter_options(self) -> dict[str, list[str]]:
+        return {
+            "All Provinces": ["All Cities"],
+            "Banten": [
+                "All Cities",
+                "Tangerang Selatan",
+                "Tangerang",
+                "Serang",
+            ],
+            "DKI Jakarta": [
+                "All Cities",
+                "Jakarta Selatan",
+                "Jakarta Pusat",
+                "Jakarta Barat",
+            ],
+            "West Java": ["All Cities", "Bandung", "Bekasi", "Depok"],
+        }
+
+    def load_kpi_data(self, filters: DashboardFilters) -> pd.DataFrame:
+        del filters
         return pd.DataFrame(
             {
                 "metric_key": [
+                    "active_campaigns",
+                    "completed_campaigns",
+                    "vouchers_claimed",
                     "vouchers_redeemed",
+                    "total_consumers",
+                    "new_consumers",
+                    "stores_participated",
+                    "redemption_rate",
                     "redemption_value",
-                    "campaigns",
-                    "customers",
-                    "new_customers",
                 ],
-                "value": [18_746, 156_800_000, 24, 12_894, 2_349],
-                "change_pct": [14.6, 18.3, 9.1, 12.8, 15.7],
-                "comparison_label": ["vs Apr 2025"] * 5,
+                "value": [
+                    25,
+                    18,
+                    84_320,
+                    39_140,
+                    152_400,
+                    28_770,
+                    120,
+                    46.4,
+                    156_800_000,
+                ],
+                "change_pct": [15.5, 8.2, 12.4, 15.5, 9.8, 18.1, 6.4, -2.3, 15.5],
+                "comparison_label": ["vs. Apr 2026"] * 9,
             }
         )
 
     def load_dashboard_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        del start_date, end_date
+        del filters
         trend_data = pd.DataFrame(
             {
                 "period": [
@@ -123,12 +170,51 @@ class MockDashboardRepository:
         )
         return trend_data, channel_data
 
+    def load_campaign_performance_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Return campaign KPIs and ordered conversion-funnel stages."""
+        del filters
+        campaign_metrics = pd.DataFrame(
+            {
+                "metric_key": [
+                    "campaign_views",
+                    "campaign_clicks",
+                    "click_through_rate",
+                    "claim_rate",
+                    "total_vouchers_redeemed",
+                    "total_redemption_value",
+                    "average_transaction_value",
+                ],
+                "value": [
+                    128_400,
+                    54_200,
+                    6.8,
+                    24.5,
+                    128_400,
+                    156_800_000,
+                    12_800,
+                ],
+                "change_pct": [15.5, 15.5, 2.5, 2.5, 15.5, 15.5, 2.5],
+                "comparison_label": ["vs. Apr 2026"] * 7,
+            }
+        )
+        funnel_data = pd.DataFrame(
+            {
+                "stage": ["View", "Click", "Claim", "Redeem"],
+                "count": [128_400, 54_200, 21_800, 9_300],
+                "percentage": [100.0, 42.0, 17.0, 7.0],
+                "stage_order": [1, 2, 3, 4],
+            }
+        )
+        return campaign_metrics, funnel_data
+
     def load_product_performance_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        del start_date, end_date
+        del filters
         category_data = pd.DataFrame(
             {
                 "category": [
@@ -170,10 +256,9 @@ class MockDashboardRepository:
 
     def load_product_detail_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        del start_date, end_date
+        del filters
         category_overview = pd.DataFrame(
             {
                 "category": [
@@ -243,10 +328,9 @@ class MockDashboardRepository:
 
     def load_merchant_performance_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        del start_date, end_date
+        del filters
         outlets = pd.DataFrame(
             {
                 "name": [
@@ -287,15 +371,14 @@ class MockDashboardRepository:
 
     def load_customer_insights_data(
         self,
-        start_date: date,
-        end_date: date,
+        filters: DashboardFilters,
     ) -> tuple[
         pd.DataFrame,
         dict[str, float | str],
         pd.DataFrame,
         pd.DataFrame,
     ]:
-        del start_date, end_date
+        del filters
         customer_segments = pd.DataFrame(
             {
                 "segment": ["New Customers", "Returning Customers"],
@@ -323,8 +406,19 @@ class MockDashboardRepository:
         return customer_segments, loyalty, gender, payment_methods
 
 
+# -----------------------------------------------------------------------------
+# Data schemas
+# These checks fail early when a backend query returns missing columns.
+# -----------------------------------------------------------------------------
 REQUIRED_COLUMNS: dict[str, set[str]] = {
     "kpi": {"metric_key", "value", "change_pct", "comparison_label"},
+    "campaign_metrics": {
+        "metric_key",
+        "value",
+        "change_pct",
+        "comparison_label",
+    },
+    "campaign_funnel": {"stage", "count", "percentage", "stage_order"},
     "trend": {
         "period",
         "vouchers_redeemed",
@@ -356,6 +450,10 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
 }
 
 
+# -----------------------------------------------------------------------------
+# Schema validation
+# Every DataFrame crosses this boundary before it reaches a chart or card.
+# -----------------------------------------------------------------------------
 def validate_frame(frame: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     """Fail early with a useful message when backend output changes shape."""
     if not isinstance(frame, pd.DataFrame):
@@ -367,6 +465,10 @@ def validate_frame(frame: pd.DataFrame, schema_name: str) -> pd.DataFrame:
     return frame.copy()
 
 
+# -----------------------------------------------------------------------------
+# Repository factory
+# An environment variable swaps mock data for the internal backend adapter.
+# -----------------------------------------------------------------------------
 def create_dashboard_repository() -> DashboardRepository:
     """Create the configured repository, defaulting to local demo data."""
     factory_path = os.getenv("DASHBOARD_REPOSITORY_FACTORY", "").strip()

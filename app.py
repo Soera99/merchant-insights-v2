@@ -8,9 +8,13 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from data_access import create_dashboard_repository, validate_frame
+from data_access import DashboardFilters, create_dashboard_repository, validate_frame
 
 
+# -----------------------------------------------------------------------------
+# Streamlit page configuration
+# This controls the browser title, icon, width, and initial sidebar state.
+# -----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Merchant Insights",
     page_icon="📊",
@@ -19,12 +23,27 @@ st.set_page_config(
 )
 
 
+# -----------------------------------------------------------------------------
+# App constants and local assets
+# Change shared dimensions here instead of searching through the rendering code.
+# -----------------------------------------------------------------------------
 APP_DIR = Path(__file__).parent
 ASSET_DIR = APP_DIR / "assets"
 # Change this one value to resize all four Customer Insights cards.
 CUSTOMER_INSIGHTS_CARD_HEIGHT = 250
 
+# Shared campaign-chart palette. Updating these values changes both the
+# Redemption & Sales Trend chart and the Conversion Funnel together.
+CAMPAIGN_CHART_BLUE = "#506ac5"
+CAMPAIGN_CHART_LIGHT_BLUE = "#edf1fa"
+# Extra tonal steps let multi-series charts stay in the same blue family.
+CAMPAIGN_CHART_TONES = ["#506ac5", "#7487d0", "#9daadd", "#c7cfeb"]
 
+
+# -----------------------------------------------------------------------------
+# Image and SVG helpers
+# These helpers embed local artwork directly into custom HTML components.
+# -----------------------------------------------------------------------------
 def image_data_uri(filename: str) -> str:
     """Return a local PNG as an embeddable data URI."""
     encoded = base64.b64encode((ASSET_DIR / filename).read_bytes()).decode("ascii")
@@ -115,58 +134,135 @@ def trend_chart_data_uri() -> str:
     return f"data:image/svg+xml;base64,{encoded}"
 
 
+# -----------------------------------------------------------------------------
+# KPI presentation configuration
+# Backend data supplies values; this mapping controls labels and number formats.
+# -----------------------------------------------------------------------------
 METRIC_PRESENTATION = {
-    "vouchers_redeemed": {
-        "label": "Total Vouchers Redeemed",
-        "icon": "checked.png",
+    "active_campaigns": {
+        "label": "Active Campaigns",
         "format": lambda value: f"{value:,.0f}",
+    },
+    "completed_campaigns": {
+        "label": "Completed Campaigns",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "vouchers_claimed": {
+        "label": "Vouchers Claimed",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "vouchers_redeemed": {
+        "label": "Vouchers Redeemed",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "total_consumers": {
+        "label": "Total Consumers",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "new_consumers": {
+        "label": "New Consumers",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "stores_participated": {
+        "label": "Total Stores Participated",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "redemption_rate": {
+        "label": "Redemption Rate",
+        "format": lambda value: f"{value:.1f}%",
     },
     "redemption_value": {
-        "label": "Total Redemption Value",
-        "icon": "redeem.png",
-        "format": lambda value: f"Rp {value / 1_000_000:.1f}M",
-    },
-    "campaigns": {
-        "label": "Total Campaigns",
-        "icon": "marketing.png",
-        "format": lambda value: f"{value:,.0f}",
-    },
-    "customers": {
-        "label": "Total Customers",
-        "icon": "team.png",
-        "format": lambda value: f"{value:,.0f}",
-    },
-    "new_customers": {
-        "label": "New Customers",
-        "icon": "add-group.png",
-        "format": lambda value: f"{value:,.0f}",
+        "label": "Total Redemption Value (Rp)",
+        "format": lambda value: f"Rp{value / 1_000_000:.1f}M",
     },
 }
 
+# Campaign cards reuse the same visual component but have their own backend keys.
+CAMPAIGN_METRIC_PRESENTATION = {
+    "campaign_views": {
+        "label": "Campaign Views",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "campaign_clicks": {
+        "label": "Campaign Clicks",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "click_through_rate": {
+        "label": "Click-Through Rate (CTR)",
+        "format": lambda value: f"{value:.1f}%",
+    },
+    "claim_rate": {
+        "label": "Claim Rate",
+        "format": lambda value: f"{value:.1f}%",
+    },
+    "total_vouchers_redeemed": {
+        "label": "Total Vouchers Redeemed",
+        "format": lambda value: f"{value:,.0f}",
+    },
+    "total_redemption_value": {
+        "label": "Total Redemption Value",
+        "format": lambda value: f"Rp{value / 1_000_000:.1f}M",
+    },
+    "average_transaction_value": {
+        "label": "Average Transaction Value",
+        "format": lambda value: f"Rp{value / 1_000:.1f}K",
+    },
+}
 
+CAMPAIGN_TOP_METRICS = [
+    "campaign_views",
+    "campaign_clicks",
+    "click_through_rate",
+    "claim_rate",
+]
+CAMPAIGN_SUMMARY_METRICS = [
+    "total_vouchers_redeemed",
+    "total_redemption_value",
+    "average_transaction_value",
+]
+
+# Increment this number whenever the DashboardRepository protocol gains or
+# changes a method. It prevents Streamlit from reusing an older cached object.
+REPOSITORY_CONTRACT_VERSION = 2
+
+
+# -----------------------------------------------------------------------------
+# Cached data-access wrappers
+# The UI calls these functions; the active repository handles mock or real data.
+# -----------------------------------------------------------------------------
 @st.cache_resource
-def get_dashboard_repository():
+def get_dashboard_repository(contract_version: int):
     """Create one repository instance per Streamlit process."""
+    # The argument intentionally participates in Streamlit's cache key.
+    del contract_version
     return create_dashboard_repository()
 
 
 @st.cache_data(ttl=300)
-def load_kpi_data(start_date: date, end_date: date) -> pd.DataFrame:
+def load_filter_options() -> dict[str, list[str]]:
+    """Load Province-to-City choices from the active backend repository."""
+    return get_dashboard_repository(
+        REPOSITORY_CONTRACT_VERSION
+    ).load_filter_options()
+
+
+@st.cache_data(ttl=300)
+def load_kpi_data(filters: DashboardFilters) -> pd.DataFrame:
     return validate_frame(
-        get_dashboard_repository().load_kpi_data(start_date, end_date),
+        get_dashboard_repository(REPOSITORY_CONTRACT_VERSION).load_kpi_data(
+            filters
+        ),
         "kpi",
     )
 
 
 @st.cache_data(ttl=300)
 def load_dashboard_data(
-    start_date: date,
-    end_date: date,
+    filters: DashboardFilters,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    trend_data, channel_data = get_dashboard_repository().load_dashboard_data(
-        start_date,
-        end_date,
-    )
+    trend_data, channel_data = get_dashboard_repository(
+        REPOSITORY_CONTRACT_VERSION
+    ).load_dashboard_data(filters)
     return (
         validate_frame(trend_data, "trend"),
         validate_frame(channel_data, "channel"),
@@ -174,15 +270,29 @@ def load_dashboard_data(
 
 
 @st.cache_data(ttl=300)
+def load_campaign_performance_data(
+    filters: DashboardFilters,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load campaign cards and funnel stages for the selected filters."""
+    campaign_metrics, funnel_data = (
+        get_dashboard_repository(
+            REPOSITORY_CONTRACT_VERSION
+        ).load_campaign_performance_data(filters)
+    )
+    return (
+        validate_frame(campaign_metrics, "campaign_metrics"),
+        validate_frame(funnel_data, "campaign_funnel"),
+    )
+
+
+@st.cache_data(ttl=300)
 def load_product_performance_data(
-    start_date: date,
-    end_date: date,
+    filters: DashboardFilters,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     category_data, sampled_products, redeemed_products = (
-        get_dashboard_repository().load_product_performance_data(
-            start_date,
-            end_date,
-        )
+        get_dashboard_repository(
+            REPOSITORY_CONTRACT_VERSION
+        ).load_product_performance_data(filters)
     )
     return (
         validate_frame(category_data, "category_performance"),
@@ -193,14 +303,12 @@ def load_product_performance_data(
 
 @st.cache_data(ttl=300)
 def load_product_detail_data(
-    start_date: date,
-    end_date: date,
+    filters: DashboardFilters,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     category_overview, hourly_redemptions = (
-        get_dashboard_repository().load_product_detail_data(
-            start_date,
-            end_date,
-        )
+        get_dashboard_repository(
+            REPOSITORY_CONTRACT_VERSION
+        ).load_product_detail_data(filters)
     )
     return (
         validate_frame(category_overview, "category_overview"),
@@ -210,14 +318,12 @@ def load_product_detail_data(
 
 @st.cache_data(ttl=300)
 def load_merchant_performance_data(
-    start_date: date,
-    end_date: date,
+    filters: DashboardFilters,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     outlets, campaigns, locations = (
-        get_dashboard_repository().load_merchant_performance_data(
-            start_date,
-            end_date,
-        )
+        get_dashboard_repository(
+            REPOSITORY_CONTRACT_VERSION
+        ).load_merchant_performance_data(filters)
     )
     return (
         validate_frame(outlets, "leaderboard"),
@@ -228,8 +334,7 @@ def load_merchant_performance_data(
 
 @st.cache_data(ttl=300)
 def load_customer_insights_data(
-    start_date: date,
-    end_date: date,
+    filters: DashboardFilters,
 ) -> tuple[
     pd.DataFrame,
     dict[str, float | str],
@@ -237,10 +342,9 @@ def load_customer_insights_data(
     pd.DataFrame,
 ]:
     customer_segments, loyalty, gender, payment_methods = (
-        get_dashboard_repository().load_customer_insights_data(
-            start_date,
-            end_date,
-        )
+        get_dashboard_repository(
+            REPOSITORY_CONTRACT_VERSION
+        ).load_customer_insights_data(filters)
     )
     return (
         validate_frame(customer_segments, "customer_segments"),
@@ -250,6 +354,43 @@ def load_customer_insights_data(
     )
 
 
+# -----------------------------------------------------------------------------
+# Reusable KPI card renderer
+# Both overview and campaign sections share this HTML to stay visually aligned.
+# -----------------------------------------------------------------------------
+def metric_card_html(metric, presentation: dict[str, object]) -> str:
+    """Return one KPI card using a repository row and presentation settings."""
+    change_sign = "+" if metric.change_pct >= 0 else ""
+    change_class = "" if metric.change_pct >= 0 else " negative"
+    change_arrow = "↑" if metric.change_pct >= 0 else "↓"
+    label = str(presentation["label"])
+    formatter = presentation["format"]
+    formatted_value = formatter(metric.value)
+    return dedent(
+        f"""
+        <article class="kpi-card" aria-label="{escape(label)}">
+            <div class="kpi-content">
+                <div class="kpi-label">{escape(label)}</div>
+                <div class="kpi-value-row">
+                    <div class="kpi-value">{escape(str(formatted_value))}</div>
+                    <div class="kpi-change{change_class}">
+                        <span aria-hidden="true">{change_arrow}</span>
+                        {change_sign}{metric.change_pct:.1f}%
+                    </div>
+                </div>
+                <div class="kpi-comparison">
+                    {escape(str(metric.comparison_label))}
+                </div>
+            </div>
+        </article>
+        """
+    ).strip()
+
+
+# -----------------------------------------------------------------------------
+# Global dashboard styling
+# CSS defines shared typography, cards, responsive layouts, and chart spacing.
+# -----------------------------------------------------------------------------
 st.markdown(
     """
     <style>
@@ -302,16 +443,34 @@ st.markdown(
             height: 1.65rem;
         }
 
-        div[data-testid="stDateInput"] {
-            width: min(100%, 330px);
-            margin-left: auto;
+        .dashboard-filter-heading {
+            margin: 1.4rem 0 0.55rem;
+            color: #787d87;
+            font-size: 0.76rem;
+            font-weight: 600;
         }
 
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        div[data-testid="stDateInput"] {
+            width: 100%;
+        }
+
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
         div[data-testid="stDateInput"] [data-baseweb="input"] {
             background: #ffffff !important;
             border: 1px solid var(--border) !important;
             border-radius: 12px !important;
             box-shadow: 0 2px 7px rgba(25, 28, 55, 0.035);
+        }
+
+        div[data-testid="stSelectbox"] [data-baseweb="select"] [value] {
+            color: #424754 !important;
+            opacity: 1 !important;
+        }
+
+        div[data-testid="stSelectbox"] [data-baseweb="select"] svg {
+            color: #787d87 !important;
+            fill: #787d87 !important;
         }
 
         div[data-testid="stDateInput"] input {
@@ -323,6 +482,13 @@ st.markdown(
         div[data-testid="stDateInput"] svg {
             color: #787d87 !important;
             fill: #787d87 !important;
+        }
+
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stDateInput"] label {
+            color: #4f5563 !important;
+            font-size: 0.78rem !important;
+            font-weight: 600 !important;
         }
 
         .kpi-section {
@@ -340,22 +506,32 @@ st.markdown(
         }
 
         .kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
+            display: flex;
+            flex-direction: column;
             gap: 1rem;
+        }
+
+        .kpi-row {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .kpi-row-four {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .kpi-row-five {
+            grid-template-columns: repeat(5, minmax(0, 1fr));
         }
 
         .kpi-card {
             box-sizing: border-box;
-            min-height: 150px;
-            padding: 1.15rem 1.25rem;
-            background: #ffffff;
-            border: 1px solid var(--border);
-            border-radius: 20px;
-            box-shadow: 0 2px 7px rgba(25, 28, 55, 0.035);
-            display: grid;
-            grid-template-columns: 56px minmax(0, 1fr);
-            column-gap: 0.65rem;
+            min-height: 166px;
+            padding: 1.4rem 1.5rem;
+            background: #f7f8fa;
+            border: 1px solid #f2f3f6;
+            border-radius: 24px;
+            box-shadow: none;
             transition: border-color 160ms ease, box-shadow 160ms ease,
                 transform 160ms ease;
         }
@@ -366,81 +542,127 @@ st.markdown(
             transform: translateY(-2px);
         }
 
-        .kpi-icon-wrap {
-            width: 56px;
-            height: 56px;
-            border-radius: 50%;
-            background: var(--brand-soft);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .kpi-icon {
-            width: 30px;
-            height: 30px;
-            object-fit: contain;
-            filter: invert(40%) sepia(82%) saturate(1193%) hue-rotate(207deg)
-                brightness(86%) contrast(91%);
-        }
-
         .kpi-content {
             min-width: 0;
-            display: grid;
-            grid-template-rows: auto auto auto;
-            align-content: start;
         }
 
         .kpi-label {
-            color: #787d87;
+            color: #374151;
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
-            font-size: 0.76rem;
-            font-weight: 400;
+            font-size: 0.9rem;
+            font-weight: 650;
             line-height: 1.3;
             margin: 0;
             white-space: nowrap;
+        }
+
+        .kpi-value-row {
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+            margin-top: 0.9rem;
         }
 
         .kpi-value {
             color: var(--ink);
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
-            font-size: clamp(1.7rem, 2vw, 2.1rem);
+            font-size: clamp(1.7rem, 2vw, 2.2rem);
             font-weight: 760;
             letter-spacing: -0.035em;
             line-height: 1.1;
-            /* First value: label-to-value gap. Third value: value-to-trend gap. */
-            margin: 0.55rem 0 0.65rem;
-            white-space: nowrap;
-        }
-
-        .kpi-trend {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 0.1rem;
+            margin: 0;
             white-space: nowrap;
         }
 
         .kpi-change {
-            color: var(--positive);
+            display: inline-flex;
+            align-items: center;
+            gap: 0.32rem;
+            padding: 0.42rem 0.66rem;
+            border-radius: 999px;
+            background: #eafbf2;
+            color: #20bd67;
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
-            font-size: 0.92rem;
+            font-size: 0.88rem;
             font-weight: 700;
             line-height: 1.25;
             margin: 0;
+            white-space: nowrap;
+        }
+
+        .kpi-change.negative {
+            background: #fff0f0;
+            color: #e05252;
         }
 
         .kpi-comparison {
-            color: #787d87;
+            color: #a1a6b2;
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
-            font-size: 0.84rem;
+            font-size: 0.8rem;
             font-weight: 400;
             line-height: 1.25;
-            margin: 0;
+            margin: 1rem 0 0;
+        }
+
+        .campaign-performance-heading {
+            color: var(--ink);
+            font-family: "Source Sans", sans-serif;
+            font-size: 1.15rem;
+            font-weight: 650;
+            letter-spacing: -0.02em;
+            line-height: 1.25;
+            margin: 0 0 1.15rem;
+        }
+
+        .campaign-metric-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .campaign-metric-grid .kpi-card,
+        .campaign-summary-grid .kpi-card {
+            min-height: 138px;
+            padding: 1.1rem 1.2rem;
+            border-radius: 20px;
+        }
+
+        .campaign-metric-grid .kpi-label,
+        .campaign-summary-grid .kpi-label {
+            font-size: 0.82rem;
+        }
+
+        .campaign-metric-grid .kpi-value,
+        .campaign-summary-grid .kpi-value {
+            font-size: clamp(1.45rem, 1.8vw, 1.85rem);
+        }
+
+        .campaign-metric-grid .kpi-value-row,
+        .campaign-summary-grid .kpi-value-row {
+            margin-top: 0.7rem;
+        }
+
+        .campaign-metric-grid .kpi-comparison,
+        .campaign-summary-grid .kpi-comparison {
+            margin-top: 0.78rem;
+            font-size: 0.75rem;
+        }
+
+        .campaign-summary-grid {
+            width: min(100%, 850px);
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1rem;
+            margin: 1rem auto 0;
+        }
+
+        .campaign-chart-title {
+            margin-bottom: 0.45rem;
         }
 
         .analytics-section {
@@ -626,9 +848,9 @@ st.markdown(
         }
 
         /* Vega-Lite emits a zero-width stroke for the custom line legend.
-           This restores the intended blue border on that empty square. */
+           This restores the intended campaign-blue border on that square. */
         div[data-testid="stVegaLiteChart"]
-            path[stroke="#2f62c9"][stroke-width="0"] {
+            path[stroke="#506ac5"][stroke-width="0"] {
             stroke-width: 2px;
         }
 
@@ -842,7 +1064,7 @@ st.markdown(
         }
 
         .merchant-count {
-            color: #787d87;
+            color: #4a66bf;
             font-size: 0.76rem;
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
@@ -899,6 +1121,7 @@ st.markdown(
             height: 8px;
             margin-top: 0.26rem;
             border-radius: 50%;
+            box-shadow: inset 0 0 0 1px rgba(74, 102, 191, 0.12);
         }
 
         .customer-legend-name {
@@ -960,8 +1183,18 @@ st.markdown(
         }
 
         .gender-breakdown {
-            gap: 0.75rem;
-            padding-top: 0.3rem;
+            gap: 0.35rem;
+            padding-top: 0.05rem;
+        }
+
+        .gender-donut-legend {
+            display: flex;
+            min-height: 104px;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.6rem;
+            font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
         }
 
         .insight-progress-label {
@@ -996,7 +1229,7 @@ st.markdown(
 
         .top-age-group {
             margin-top: 0.2rem;
-            padding-top: 0.95rem;
+            padding-top: 0.58rem;
             border-top: 1px solid var(--border);
         }
 
@@ -1006,7 +1239,7 @@ st.markdown(
         }
 
         .top-age-value {
-            margin-top: 0.35rem;
+            margin-top: 0.22rem;
             color: #303441;
             font-size: 0.95rem;
             font-variant-numeric: tabular-nums;
@@ -1125,16 +1358,108 @@ st.markdown(
         }
 
         .category-inline-fill.blue {
-            background: #3564e8;
+            background: #506ac5;
         }
 
         .category-inline-fill.purple {
-            background: #a895e5;
+            background: #edf1fa;
+        }
+
+        .category-compact-table {
+            width: 100%;
+            font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+        }
+
+        .category-compact-row {
+            display: grid;
+            grid-template-columns: minmax(110px, 0.85fr) minmax(220px, 1.55fr);
+            align-items: center;
+            min-height: 3.15rem;
+            gap: 0.9rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .category-compact-row:last-child {
+            border-bottom: 0;
+        }
+
+        .category-compact-header {
+            min-height: 2.65rem;
+            color: #6d7482;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+
+        .category-compact-name {
+            color: #303441;
+            font-size: 0.77rem;
+            font-weight: 600;
+        }
+
+        .category-compact-metric {
+            display: grid;
+            grid-template-columns: auto minmax(70px, 1fr);
+            align-items: center;
+            gap: 0.7rem;
+            color: #737b8b;
+            font-size: 0.74rem;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .category-compact-track {
+            height: 7px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #f0f2f7;
+        }
+
+        .category-compact-fill {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+            background: #506ac5;
+        }
+
+        .product-channel-legend {
+            display: grid;
+            align-content: center;
+            gap: 0.78rem;
+            min-height: 235px;
+            font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+        }
+
+        .product-channel-row {
+            display: grid;
+            grid-template-columns: 10px minmax(72px, 1fr) auto;
+            align-items: center;
+            gap: 0.55rem;
+            color: #3f4654;
+            font-size: 0.75rem;
+        }
+
+        .product-channel-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+        }
+
+        .product-channel-value {
+            color: #303744;
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            white-space: nowrap;
         }
 
         @media (max-width: 1320px) {
-            .kpi-grid {
+            .kpi-row-four,
+            .kpi-row-five {
                 grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+
+            .campaign-metric-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
 
@@ -1157,7 +1482,8 @@ st.markdown(
                 padding: 1.5rem 1rem 2rem;
             }
 
-            .kpi-grid {
+            .kpi-row-four,
+            .kpi-row-five {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
@@ -1187,7 +1513,13 @@ st.markdown(
                 font-size: 1.15rem;
             }
 
-            .kpi-grid {
+            .kpi-row-four,
+            .kpi-row-five {
+                grid-template-columns: 1fr;
+            }
+
+            .campaign-metric-grid,
+            .campaign-summary-grid {
                 grid-template-columns: 1fr;
             }
 
@@ -1220,31 +1552,50 @@ st.markdown(
 )
 
 
-dashboard_title_column, dashboard_date_column = st.columns(
-    [3, 1],
-    gap="medium",
-    vertical_alignment="center",
+# -----------------------------------------------------------------------------
+# Dashboard header and global filters
+# Province controls the City choices, and all three filters reach every query.
+# -----------------------------------------------------------------------------
+st.html(
+    """
+    <div>
+        <div class="dashboard-title">Business Insight Dashboard</div>
+        <div class="dashboard-description">
+            Monitor campaign, voucher, product, and merchant performance
+            in real-time.
+        </div>
+    </div>
+    """
 )
 
-with dashboard_title_column:
-    st.html(
-        """
-        <div>
-            <div class="dashboard-title">Business Insight Dashboard</div>
-            <div class="dashboard-description">
-                Monitor campaign, voucher, product, and merchant performance
-                in real-time.
-            </div>
-        </div>
-        """
+filter_options = load_filter_options()
+if not filter_options or any(not cities for cities in filter_options.values()):
+    raise ValueError("Filter options must contain at least one Province and City")
+province_column, city_column, date_column = st.columns(
+    [1, 1, 1.35],
+    gap="medium",
+    vertical_alignment="bottom",
+)
+
+with province_column:
+    selected_province = st.selectbox(
+        "Province",
+        options=list(filter_options),
+        key="dashboard_province",
     )
 
-with dashboard_date_column:
+with city_column:
+    selected_city = st.selectbox(
+        "City",
+        options=filter_options[selected_province],
+        key=f"dashboard_city_{selected_province}",
+    )
+
+with date_column:
     selected_date_range = st.date_input(
-        "Dashboard date range",
-        value=(date(2025, 5, 1), date(2025, 5, 31)),
+        "Date",
+        value=(date(2026, 5, 1), date(2026, 5, 31)),
         format="DD/MM/YYYY",
-        label_visibility="collapsed",
         key="dashboard_date_range",
     )
 
@@ -1259,38 +1610,24 @@ else:
     dashboard_start_date = selected_date_range
     dashboard_end_date = selected_date_range
 
-kpi_data = load_kpi_data(dashboard_start_date, dashboard_end_date)
+dashboard_filters = DashboardFilters(
+    province=selected_province,
+    city=selected_city,
+    start_date=dashboard_start_date,
+    end_date=dashboard_end_date,
+)
+
+# -----------------------------------------------------------------------------
+# Key Performance Overview
+# Values come from the repository; the UI only formats and arranges the cards.
+# -----------------------------------------------------------------------------
+kpi_data = load_kpi_data(dashboard_filters)
 kpi_rows = {row.metric_key: row for row in kpi_data.itertuples(index=False)}
 cards = []
 for metric_key, presentation in METRIC_PRESENTATION.items():
     if metric_key not in kpi_rows:
         raise ValueError(f"KPI data is missing metric_key: {metric_key}")
-    metric = kpi_rows[metric_key]
-    change_sign = "+" if metric.change_pct >= 0 else ""
-    label = presentation["label"]
-    cards.append(
-        dedent(
-            f"""
-        <article class="kpi-card" aria-label="{label}">
-            <div class="kpi-icon-wrap">
-                <img
-                    class="kpi-icon"
-                    src="{image_data_uri(presentation['icon'])}"
-                    alt=""
-                />
-            </div>
-            <div class="kpi-content">
-                <div class="kpi-label">{label}</div>
-                <div class="kpi-value">{presentation['format'](metric.value)}</div>
-                <div class="kpi-trend">
-                    <div class="kpi-change">{change_sign}{metric.change_pct:.1f}%</div>
-                    <div class="kpi-comparison">{escape(str(metric.comparison_label))}</div>
-                </div>
-            </div>
-        </article>
-        """
-        ).strip()
-    )
+    cards.append(metric_card_html(kpi_rows[metric_key], presentation))
 
 st.html('<div class="dashboard-header-spacer" aria-hidden="true"></div>')
 
@@ -1302,7 +1639,12 @@ st.markdown(
             Key Performance Overview
         </div>
         <div class="kpi-grid">
-            {''.join(cards)}
+            <div class="kpi-row kpi-row-four">
+                {''.join(cards[:4])}
+            </div>
+            <div class="kpi-row kpi-row-five">
+                {''.join(cards[4:])}
+            </div>
         </div>
     </main>
     """
@@ -1490,6 +1832,10 @@ if False:  # Legacy static prototype kept temporarily for design reference.
     )
 
 
+# -----------------------------------------------------------------------------
+# Interactive chart builders
+# Each function turns one validated backend DataFrame into an Altair chart.
+# -----------------------------------------------------------------------------
 def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
     """Create the interactive stacked-bar and transaction-value trend chart."""
     period_order = data["period"].tolist()
@@ -1542,7 +1888,8 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
                 title=None,
                 scale=alt.Scale(
                     domain=bar_series_order,
-                    range=["#3564e8", "#a895e5"],
+                    # Match the dark-blue and pale-blue Conversion Funnel.
+                    range=[CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE],
                 ),
                 legend=alt.Legend(
                     orient="top",
@@ -1568,9 +1915,9 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
     average_line = (
         alt.Chart(line_data)
         .mark_line(
-            color="#2f62c9",
+            color=CAMPAIGN_CHART_BLUE,
             point=alt.OverlayMarkDef(
-                color="#2f62c9",
+                color=CAMPAIGN_CHART_BLUE,
                 filled=True,
                 size=65,
                 stroke="white",
@@ -1612,7 +1959,7 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
             shape="square",
             filled=True,
             fill="#ffffff",
-            stroke="#2f62c9",
+            stroke=CAMPAIGN_CHART_BLUE,
             strokeWidth=2,
             size=150,
             clip=True,
@@ -1625,7 +1972,7 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
                 title=None,
                 scale=alt.Scale(
                     domain=["Average Transaction Value (Rp)"],
-                    range=["#2f62c9"],
+                    range=[CAMPAIGN_CHART_BLUE],
                 ),
                 legend=alt.Legend(
                     orient="top",
@@ -1634,7 +1981,7 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
                     symbolType="square",
                     symbolSize=150,
                     symbolFillColor="#ffffff",
-                    symbolStrokeColor="#2f62c9",
+                    symbolStrokeColor=CAMPAIGN_CHART_BLUE,
                     symbolStrokeWidth=2,
                 ),
             ),
@@ -1662,52 +2009,120 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
     )
 
 
+def build_conversion_funnel_chart(data: pd.DataFrame) -> alt.Chart:
+    """Create an interactive horizontal conversion funnel from View to Redeem."""
+    chart_data = data.sort_values("stage_order").copy()
+    chart_data["full_percentage"] = 100.0
+    chart_data["zero"] = 0.0
+    chart_data["percentage_label"] = chart_data["percentage"].map(
+        lambda value: f"{value:.0f}%"
+    )
+    chart_data["count_label"] = chart_data["count"].map(
+        lambda value: f"{value:,.0f}"
+    )
+    stage_order = chart_data["stage"].tolist()
+
+    background = (
+        alt.Chart(chart_data)
+        .mark_bar(size=38, color=CAMPAIGN_CHART_LIGHT_BLUE, cornerRadius=5)
+        .encode(
+            y=alt.Y(
+                "stage:N",
+                sort=stage_order,
+                title=None,
+                axis=alt.Axis(labelPadding=12, labelFontSize=12, tickSize=0),
+            ),
+            x=alt.X(
+                "full_percentage:Q",
+                scale=alt.Scale(domain=[0, 100]),
+                axis=None,
+            ),
+        )
+    )
+    filled = (
+        alt.Chart(chart_data)
+        .mark_bar(size=38, color=CAMPAIGN_CHART_BLUE, cornerRadius=5)
+        .encode(
+            y=alt.Y("stage:N", sort=stage_order, title=None),
+            x=alt.X("percentage:Q", scale=alt.Scale(domain=[0, 100]), axis=None),
+            tooltip=[
+                alt.Tooltip("stage:N", title="Stage"),
+                alt.Tooltip("count:Q", title="Consumers", format=","),
+                alt.Tooltip("percentage:Q", title="Conversion", format=".1f"),
+            ],
+        )
+    )
+    percentage_text = (
+        alt.Chart(chart_data)
+        .mark_text(align="left", baseline="middle", dx=9, color="white", fontWeight=700)
+        .encode(
+            y=alt.Y("stage:N", sort=stage_order, title=None),
+            x=alt.X("zero:Q", scale=alt.Scale(domain=[0, 100]), axis=None),
+            text="percentage_label:N",
+        )
+    )
+    count_text = (
+        alt.Chart(chart_data)
+        .mark_text(
+            align="right",
+            baseline="middle",
+            dx=-8,
+            color="#343a48",
+            fontWeight=600,
+        )
+        .encode(
+            y=alt.Y("stage:N", sort=stage_order, title=None),
+            x=alt.X("full_percentage:Q", scale=alt.Scale(domain=[0, 100]), axis=None),
+            text="count_label:N",
+        )
+    )
+
+    return (
+        alt.layer(background, filled, percentage_text, count_text)
+        .properties(height=300)
+        .configure(background="#ffffff")
+        .configure_view(stroke=None, fill="#ffffff")
+        .configure_axis(domain=False, labelColor="#7a8190", grid=False)
+    )
+
+
 def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
-    """Create the interactive redemption-channel donut chart."""
+    """Create the compact Product Performance redemption-channel donut."""
     chart_data = data.copy()
     chart_data["percentage"] = chart_data["redemptions"] / chart_data["redemptions"].sum()
-    raw_percentages = chart_data["percentage"] * 100
-    rounded_percentages = raw_percentages.astype(int)
-    remaining_points = 100 - int(rounded_percentages.sum())
-    largest_remainders = (raw_percentages - rounded_percentages).nlargest(
-        remaining_points
-    )
-    rounded_percentages.loc[largest_remainders.index] += 1
-    chart_data["percentage_label"] = rounded_percentages.map(
-        lambda value: f"{value}%"
-    )
     chart_data["sort_order"] = range(len(chart_data))
     channel_order = chart_data["channel"].tolist()
-    channel_colors = ["#365bc8", "#765acb", "#fb9844", "#3aaed1"]
+    channel_colors = [
+        CAMPAIGN_CHART_TONES[index % len(CAMPAIGN_CHART_TONES)]
+        for index in range(len(channel_order))
+    ]
 
-    base = alt.Chart(chart_data).encode(
-        theta=alt.Theta("redemptions:Q", stack=True),
-        color=alt.Color(
-            "channel:N",
-            scale=alt.Scale(domain=channel_order, range=channel_colors),
-            legend=None,
-        ),
-        order=alt.Order("sort_order:Q", sort="ascending"),
-        tooltip=[
-            alt.Tooltip("channel:N", title="Channel"),
-            alt.Tooltip("redemptions:Q", title="Redemptions", format=","),
-            alt.Tooltip("percentage:Q", title="Share", format=".1%"),
-        ],
+    arcs = (
+        alt.Chart(chart_data)
+        .mark_arc(innerRadius=48, outerRadius=76, stroke="white", strokeWidth=1)
+        .encode(
+            theta=alt.Theta("redemptions:Q", stack=True),
+            color=alt.Color(
+                "channel:N",
+                scale=alt.Scale(domain=channel_order, range=channel_colors),
+                legend=None,
+            ),
+            order=alt.Order("sort_order:Q", sort="ascending"),
+            tooltip=[
+                alt.Tooltip("channel:N", title="Channel"),
+                alt.Tooltip("redemptions:Q", title="Redemptions", format=","),
+                alt.Tooltip("percentage:Q", title="Share", format=".1%"),
+            ],
+        )
     )
-    arcs = base.mark_arc(innerRadius=58, outerRadius=105, stroke="white", strokeWidth=1)
-    labels = base.mark_text(
-        radius=82,
-        color="white",
-        fontSize=13,
-        fontWeight=700,
-    ).encode(
-        text="percentage_label:N",
-        # Override the channel color inherited from the shared base chart.
-        color=alt.value("#ffffff"),
+    center_label = (
+        alt.Chart(pd.DataFrame({"label": ["100%"]}))
+        .mark_text(color="#242b39", fontSize=16, fontWeight=700)
+        .encode(text="label:N")
     )
     return (
-        (arcs + labels)
-        .properties(height=245)
+        (arcs + center_label)
+        .properties(height=235)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
     )
@@ -1755,7 +2170,7 @@ def build_category_performance_chart(data: pd.DataFrame) -> alt.Chart:
                 title=None,
                 scale=alt.Scale(
                     domain=series_order,
-                    range=["#3564e8", "#a895e5"],
+                    range=[CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE],
                 ),
                 legend=alt.Legend(
                     orient="top",
@@ -1806,23 +2221,25 @@ def build_category_performance_chart(data: pd.DataFrame) -> alt.Chart:
 
 
 def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
-    """Create an hourly redemption chart with clickable data points."""
+    """Create the compact hourly bar chart used in Product Performance."""
+    # Hour 24 is the endpoint from the previous line-chart design. The bar
+    # layout displays the 24 complete hourly buckets from 00:00 through 23:00.
+    chart_data = data.loc[data["hour"] < 24].copy()
     selected_hour = alt.selection_point(
         name="selected_hour",
         fields=["hour"],
         on="click",
-        nearest=True,
         empty=False,
     )
 
-    base = alt.Chart(data).encode(
+    base = alt.Chart(chart_data).encode(
         x=alt.X(
             "hour:Q",
             title=None,
-            scale=alt.Scale(domain=[0, 24]),
+            scale=alt.Scale(domain=[-0.5, 23.5], nice=False),
             axis=alt.Axis(
-                values=[0, 4, 8, 12, 16, 20, 24],
-                labelExpr="datum.value + ':00'",
+                values=[0, 5, 10, 15, 20],
+                format=".0f",
                 labelPadding=10,
                 tickSize=0,
                 grid=False,
@@ -1832,45 +2249,34 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
             "redemptions:Q",
             title=None,
             scale=alt.Scale(domain=[0, 4_000]),
-            axis=alt.Axis(format="~s", tickCount=5, tickSize=0, grid=True),
+            axis=alt.Axis(
+                values=[0, 1_000, 2_000, 3_000, 4_000],
+                labelExpr="datum.value === 0 ? '0' : format(datum.value / 1000, '.0f') + 'k'",
+                tickSize=0,
+                grid=True,
+            ),
         ),
     )
 
-    area = base.mark_area(
-        interpolate="monotone",
-        color="#3564e8",
-        opacity=0.08,
-    )
-    line = base.mark_line(
-        interpolate="monotone",
-        color="#3564e8",
-        strokeWidth=2.5,
-    )
-    points = (
-        base.mark_point(
-            filled=True,
-            color="#3564e8",
-            size=48,
-            stroke="#ffffff",
-            strokeWidth=1.5,
+    bars = (
+        base.mark_bar(
+            size=13,
+            cornerRadiusTopLeft=5,
+            cornerRadiusTopRight=5,
         )
         .encode(
+            color=alt.condition(
+                selected_hour,
+                alt.value(CAMPAIGN_CHART_BLUE),
+                alt.value(CAMPAIGN_CHART_BLUE),
+            ),
+            opacity=alt.condition(selected_hour, alt.value(1), alt.value(0.92)),
             tooltip=[
                 alt.Tooltip("time_range:N", title="Time"),
                 alt.Tooltip("redemptions:Q", title="Redemptions", format=","),
             ],
         )
         .add_params(selected_hour)
-    )
-    selected_point = (
-        base.transform_filter(selected_hour)
-        .mark_point(
-            filled=True,
-            color="#3564e8",
-            size=115,
-            stroke="#ffffff",
-            strokeWidth=2,
-        )
     )
     selected_label = (
         base.transform_filter(selected_hour)
@@ -1884,8 +2290,8 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
     )
 
     return (
-        alt.layer(area, line, points, selected_point, selected_label)
-        .properties(height=285)
+        alt.layer(bars, selected_label)
+        .properties(height=260)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
         .configure_axis(
@@ -1899,7 +2305,7 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
 
 
 def build_customer_mix_chart(data: pd.DataFrame) -> alt.Chart:
-    """Create the new-versus-returning customer donut chart."""
+    """Create the Consumer Type donut chart."""
     chart_data = data.copy()
     chart_data["percentage"] = (
         chart_data["customers"] / chart_data["customers"].sum() * 100
@@ -1921,7 +2327,7 @@ def build_customer_mix_chart(data: pd.DataFrame) -> alt.Chart:
                 "segment:N",
                 scale=alt.Scale(
                     domain=segment_order,
-                    range=["#3564e8", "#765acb"],
+                    range=[CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE],
                 ),
                 legend=None,
             ),
@@ -1939,104 +2345,139 @@ def build_customer_mix_chart(data: pd.DataFrame) -> alt.Chart:
     )
 
 
-trend_data, channel_data = load_dashboard_data(
-    dashboard_start_date,
-    dashboard_end_date,
-)
+def build_gender_chart(data: pd.DataFrame) -> alt.Chart:
+    """Create the compact male-versus-female redemption donut chart."""
+    chart_data = data.copy()
+    gender_order = chart_data["gender"].tolist()
+
+    return (
+        alt.Chart(chart_data)
+        .mark_arc(
+            innerRadius=25,
+            outerRadius=44,
+            stroke="#ffffff",
+            strokeWidth=1,
+        )
+        .encode(
+            theta=alt.Theta("percentage:Q", stack=True),
+            color=alt.Color(
+                "gender:N",
+                scale=alt.Scale(
+                    domain=gender_order,
+                    range=[CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE],
+                ),
+                legend=None,
+            ),
+            order=alt.Order("gender:N", sort="ascending"),
+            tooltip=[
+                alt.Tooltip("gender:N", title="Gender"),
+                alt.Tooltip("percentage:Q", title="Redemptions", format=".1f"),
+            ],
+        )
+        .properties(height=105)
+        .configure(background="#ffffff")
+        .configure_view(stroke=None, fill="#ffffff")
+    )
+
+
+# -----------------------------------------------------------------------------
+# Filtered dataset loading and chart preparation
+# One filter object keeps every dashboard section synchronized.
+# -----------------------------------------------------------------------------
+trend_data, channel_data = load_dashboard_data(dashboard_filters)
 trend_chart = build_trend_chart(trend_data)
 channel_chart = build_channel_chart(channel_data)
+campaign_metrics, funnel_data = load_campaign_performance_data(dashboard_filters)
+funnel_chart = build_conversion_funnel_chart(funnel_data)
+campaign_metric_rows = {
+    row.metric_key: row for row in campaign_metrics.itertuples(index=False)
+}
+missing_campaign_metrics = set(CAMPAIGN_METRIC_PRESENTATION).difference(
+    campaign_metric_rows
+)
+if missing_campaign_metrics:
+    missing_labels = ", ".join(sorted(missing_campaign_metrics))
+    raise ValueError(f"Campaign data is missing metric_key values: {missing_labels}")
+
+campaign_top_cards = [
+    metric_card_html(
+        campaign_metric_rows[metric_key],
+        CAMPAIGN_METRIC_PRESENTATION[metric_key],
+    )
+    for metric_key in CAMPAIGN_TOP_METRICS
+]
+campaign_summary_cards = [
+    metric_card_html(
+        campaign_metric_rows[metric_key],
+        CAMPAIGN_METRIC_PRESENTATION[metric_key],
+    )
+    for metric_key in CAMPAIGN_SUMMARY_METRICS
+]
 category_data, sampled_products, redeemed_products = load_product_performance_data(
-    dashboard_start_date,
-    dashboard_end_date,
+    dashboard_filters
 )
 category_chart = build_category_performance_chart(category_data)
-category_overview, hourly_redemptions = load_product_detail_data(
-    dashboard_start_date,
-    dashboard_end_date,
-)
+category_overview, hourly_redemptions = load_product_detail_data(dashboard_filters)
 time_of_day_chart = build_time_of_day_chart(hourly_redemptions)
-outlets, campaigns, locations = load_merchant_performance_data(
-    dashboard_start_date,
-    dashboard_end_date,
-)
+outlets, campaigns, locations = load_merchant_performance_data(dashboard_filters)
 customer_segments, loyalty, gender, payment_methods = load_customer_insights_data(
-    dashboard_start_date,
-    dashboard_end_date,
+    dashboard_filters
 )
 customer_mix_chart = build_customer_mix_chart(customer_segments)
+gender_chart = build_gender_chart(gender)
 
-total_vouchers = int(trend_data["vouchers_redeemed"].sum())
-total_redemption = float(trend_data["redemption_value"].sum())
-average_transaction = total_redemption / total_vouchers
-
+# -----------------------------------------------------------------------------
+# Campaign Performance section
+# Shows engagement KPIs, trend and funnel charts, then three value summaries.
+# -----------------------------------------------------------------------------
 st.html('<div class="section-spacer" aria-hidden="true"></div>')
+st.html(
+    f"""
+    <section aria-label="Campaign Performance">
+        <div class="campaign-performance-heading">Campaign Performance</div>
+        <div class="campaign-metric-grid">
+            {''.join(campaign_top_cards)}
+        </div>
+    </section>
+    """
+)
 
-trend_column, channel_column = st.columns([3, 1], gap="medium")
+campaign_trend_column, funnel_column = st.columns([1, 1], gap="medium")
 
-with trend_column:
-    with st.container(border=True, height=500):
+with campaign_trend_column:
+    with st.container(border=True, height=430):
         st.html(
-            '<div class="analytics-title native-chart-title">'
+            '<div class="analytics-title native-chart-title campaign-chart-title">'
             "Redemption &amp; Sales Trend</div>"
         )
-        chart_column, summary_column = st.columns([4, 1], gap="medium")
-        with chart_column:
-            st.html('<div class="trend-chart-spacer" aria-hidden="true"></div>')
-            st.altair_chart(trend_chart, width="stretch")
-        with summary_column:
-            st.html(
-                f"""
-                <div class="native-summary">
-                    <div class="summary-item">
-                        <div class="summary-value">{total_vouchers:,}</div>
-                        <div class="summary-label">Total Voucher Redeemed</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="summary-value">Rp {total_redemption / 1_000_000:.1f}M</div>
-                        <div class="summary-label">Total Redemption Value</div>
-                    </div>
-                    <div class="summary-item">
-                        <div class="summary-value">Rp {average_transaction:,.0f}</div>
-                        <div class="summary-label">Average Transaction Value</div>
-                    </div>
-                </div>
-                """
-            )
+        st.altair_chart(trend_chart, width="stretch")
 
-with channel_column:
-    with st.container(border=True, height=500):
+with funnel_column:
+    with st.container(border=True, height=430):
         st.html(
-            '<div class="analytics-title native-chart-title">'
-            "Redemption by Channel</div>"
+            '<div class="analytics-title native-chart-title campaign-chart-title">'
+            "Conversion Funnel</div>"
         )
-        st.altair_chart(channel_chart, width="stretch")
-        channel_colors = {
-            "In-store": "#365bc8",
-            "Klikko-Hub": "#765acb",
-            "QR Payment": "#fb9844",
-            "Other": "#3aaed1",
-        }
-        channel_rows = "".join(
-            f"""
-            <div class="channel-row">
-                <span class="channel-dot" style="background:{channel_colors[row.channel]}"></span>
-                <span>{row.channel}</span>
-                <span class="channel-value">{row.redemptions:,}</span>
-            </div>
-            """
-            for row in channel_data.itertuples(index=False)
-        )
-        st.html(f'<div class="channel-list">{channel_rows}</div>')
+        st.altair_chart(funnel_chart, width="stretch")
+
+st.html(
+    f"""
+    <div class="campaign-summary-grid" aria-label="Campaign value summary">
+        {''.join(campaign_summary_cards)}
+    </div>
+    """
+)
 
 
+# -----------------------------------------------------------------------------
+# Product Performance section
+# Combines category comparison, top-product lists, detailed KPIs, and time use.
+# -----------------------------------------------------------------------------
 st.html('<div class="section-spacer" aria-hidden="true"></div>')
 st.html(
     """
     <div class="product-section-heading">
         <div class="product-section-title">Product Performance</div>
-        <div class="product-section-description">
-            Top products by redemption, sampling, and category
-        </div>
     </div>
     """
 )
@@ -2098,49 +2539,34 @@ with redeemed_column:
 
 
 st.html('<div class="product-detail-spacer" aria-hidden="true"></div>')
-overview_column, time_column = st.columns([1.5, 1], gap="medium")
+overview_column, time_column, channel_column = st.columns(
+    [1, 1, 1],
+    gap="medium",
+)
 
 with overview_column:
-    with st.container(border=True, height=400):
+    with st.container(border=True, height=390):
         st.html(
             '<div class="analytics-title native-chart-title product-card-title">'
             "Category Performance Overview</div>"
         )
         maximum_vouchers = float(category_overview["vouchers_redeemed"].max())
-        maximum_value = float(category_overview["redemption_value"].max())
         overview_rows = "".join(
             f"""
-            <div class="category-overview-row">
-                <div class="category-overview-cell category-overview-category">
+            <div class="category-compact-row">
+                <div class="category-compact-name">
                     {escape(str(row.category))}
                 </div>
-                <div class="category-overview-cell category-metric">
-                    <span class="category-metric-value">
+                <div class="category-compact-metric">
+                    <span>
                         {row.vouchers_redeemed:,} ({row.redeemed_share:.1f}%)
                     </span>
-                    <span class="category-inline-track">
+                    <span class="category-compact-track">
                         <span
-                            class="category-inline-fill blue"
+                            class="category-compact-fill"
                             style="display:block;width:{row.vouchers_redeemed / maximum_vouchers * 100:.1f}%"
                         ></span>
                     </span>
-                </div>
-                <div class="category-overview-cell category-metric">
-                    <span class="category-metric-value">
-                        Rp {row.redemption_value:,.0f}
-                    </span>
-                    <span class="category-inline-track">
-                        <span
-                            class="category-inline-fill purple"
-                            style="display:block;width:{row.redemption_value / maximum_value * 100:.1f}%"
-                        ></span>
-                    </span>
-                </div>
-                <div class="category-overview-cell">
-                    {row.unique_customers:,}
-                </div>
-                <div class="category-overview-cell category-overview-rate">
-                    {row.conversion_rate:.1f}%
                 </div>
             </div>
             """
@@ -2148,38 +2574,65 @@ with overview_column:
         )
         st.html(
             f"""
-            <div class="category-overview-wrap">
-                <div class="category-overview-table">
-                    <div class="category-overview-row category-overview-header">
+            <div class="category-compact-table">
+                    <div class="category-compact-row category-compact-header">
                         <div>Category</div>
                         <div>Voucher Redeemed</div>
-                        <div>Redemption Value (Rp)</div>
-                        <div>Unique Customers</div>
-                        <div class="category-overview-rate">Conversion Rate</div>
                     </div>
                     {overview_rows}
-                </div>
             </div>
             """
         )
 
 with time_column:
-    with st.container(border=True, height=400):
+    with st.container(border=True, height=390):
         st.html(
             '<div class="analytics-title native-chart-title product-card-title">'
             "Redemption by Time of Day</div>"
         )
         st.altair_chart(time_of_day_chart, width="stretch")
 
+with channel_column:
+    with st.container(border=True, height=390):
+        st.html(
+            '<div class="analytics-title native-chart-title product-card-title">'
+            "Redemption by Channel</div>"
+        )
+        channel_total = float(channel_data["redemptions"].sum())
+        channel_legend_rows = "".join(
+            f"""
+            <div class="product-channel-row">
+                <span
+                    class="product-channel-dot"
+                    style="background:{CAMPAIGN_CHART_TONES[index % len(CAMPAIGN_CHART_TONES)]}"
+                ></span>
+                <span>{escape(str(row.channel))}</span>
+                <span class="product-channel-value">
+                    {row.redemptions:,}
+                    ({row.redemptions / channel_total * 100:.0f}%)
+                </span>
+            </div>
+            """
+            for index, row in enumerate(channel_data.itertuples(index=False))
+        )
+        donut_column, legend_column = st.columns([0.9, 1.25], gap="small")
+        with donut_column:
+            st.altair_chart(channel_chart, width="stretch")
+        with legend_column:
+            st.html(
+                f'<div class="product-channel-legend">{channel_legend_rows}</div>'
+            )
 
+
+# -----------------------------------------------------------------------------
+# Merchant Performance section
+# Ranks outlets, campaigns, and cities by redeemed-voucher volume.
+# -----------------------------------------------------------------------------
 st.html('<div class="section-spacer" aria-hidden="true"></div>')
 st.html(
     """
     <div class="product-section-heading">
         <div class="product-section-title">Merchant Performance</div>
-        <div class="product-section-description">
-            Best performing outlets, campaigns, and locations
-        </div>
     </div>
     """
 )
@@ -2250,6 +2703,10 @@ with location_column:
         st.html(f'<div class="merchant-list">{location_rows}</div>')
 
 
+# -----------------------------------------------------------------------------
+# Customer Insights section
+# Summarizes customer mix, loyalty, gender, age, and payment preferences.
+# -----------------------------------------------------------------------------
 st.html('<div class="section-spacer" aria-hidden="true"></div>')
 st.html(
     """
@@ -2270,7 +2727,7 @@ with customer_mix_column:
         st.html(
             '<div class="analytics-title native-chart-title product-card-title '
             'customer-card-title">'
-            "New vs Returning Customers</div>"
+            "Consumer Type</div>"
         )
         donut_column, customer_legend_column = st.columns(
             [0.78, 1.22],
@@ -2281,9 +2738,10 @@ with customer_mix_column:
             st.altair_chart(customer_mix_chart, width="stretch")
         with customer_legend_column:
             segment_total = float(customer_segments["customers"].sum())
+            customer_palette = [CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE]
             customer_colors = {
-                "New Customers": "#3564e8",
-                "Returning Customers": "#765acb",
+                segment: customer_palette[index % len(customer_palette)]
+                for index, segment in enumerate(customer_segments["segment"])
             }
             customer_legend_rows = "".join(
                 f"""
@@ -2346,29 +2804,44 @@ with gender_column:
             'customer-card-title">'
             "Redemption by Gender</div>"
         )
-        gender_rows = "".join(
+        gender_palette = [CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE]
+        gender_colors = {
+            label: gender_palette[index % len(gender_palette)]
+            for index, label in enumerate(gender["gender"])
+        }
+        gender_legend_rows = "".join(
             f"""
-            <div>
-                <div class="insight-progress-label">
-                    <span>{escape(str(row.gender))}</span>
-                    <span class="insight-progress-value">
+            <div class="customer-legend-item">
+                <span
+                    class="customer-legend-dot"
+                    style="background:{gender_colors[row.gender]}"
+                ></span>
+                <div>
+                    <div class="customer-legend-name">
+                        {escape(str(row.gender))}
+                    </div>
+                    <div class="customer-legend-detail">
                         {row.percentage:.0f}%
-                    </span>
-                </div>
-                <div class="insight-progress-track">
-                    <div
-                        class="insight-progress-fill"
-                        style="width:{row.percentage:.1f}%"
-                    ></div>
+                    </div>
                 </div>
             </div>
             """
             for row in gender.itertuples(index=False)
         )
+        gender_donut_column, gender_legend_column = st.columns(
+            [0.82, 1.18],
+            gap="small",
+            vertical_alignment="top",
+        )
+        with gender_donut_column:
+            st.altair_chart(gender_chart, width="stretch")
+        with gender_legend_column:
+            st.html(
+                f'<div class="gender-donut-legend">{gender_legend_rows}</div>'
+            )
         st.html(
             f"""
             <div class="gender-breakdown">
-                {gender_rows}
                 <div class="top-age-group">
                     <div class="top-age-label">Top Age Group</div>
                     <div class="top-age-value">
