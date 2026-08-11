@@ -115,11 +115,10 @@ The authoritative method signatures and schemas are in
 - Outlet, campaign, and location leaderboards: `name`, `redemptions`
 - Customer segments: `segment`, `customers`
 - Gender: `gender`, `percentage`
-- Payment methods: `method`, `percentage`
+- Age groups: `age_group`, `age_range`, `percentage`
 
 The customer loyalty result is a dictionary containing
-`average_transactions`, `repeat_customer_percentage`, `top_age_group`, and
-`top_age_group_percentage`.
+`average_transactions` and `repeat_customer_percentage`.
 
 The KPI dataset must return these nine `metric_key` values in any order:
 `active_campaigns`, `completed_campaigns`, `vouchers_claimed`,

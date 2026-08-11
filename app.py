@@ -1,6 +1,7 @@
 import base64
 from datetime import date
 from html import escape
+from importlib import reload
 from pathlib import Path
 from textwrap import dedent
 
@@ -8,7 +9,17 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from data_access import DashboardFilters, create_dashboard_repository, validate_frame
+import data_access as data_access_module
+
+
+# Streamlit reruns app.py without always re-importing changed local modules.
+# Reload the data layer when its schema contract is older than this UI version.
+if "age_groups" not in data_access_module.REQUIRED_COLUMNS:
+    data_access_module = reload(data_access_module)
+
+DashboardFilters = data_access_module.DashboardFilters
+create_dashboard_repository = data_access_module.create_dashboard_repository
+validate_frame = data_access_module.validate_frame
 
 
 # -----------------------------------------------------------------------------
@@ -223,7 +234,7 @@ CAMPAIGN_SUMMARY_METRICS = [
 
 # Increment this number whenever the DashboardRepository protocol gains or
 # changes a method. It prevents Streamlit from reusing an older cached object.
-REPOSITORY_CONTRACT_VERSION = 2
+REPOSITORY_CONTRACT_VERSION = 5
 
 
 # -----------------------------------------------------------------------------
@@ -341,7 +352,7 @@ def load_customer_insights_data(
     pd.DataFrame,
     pd.DataFrame,
 ]:
-    customer_segments, loyalty, gender, payment_methods = (
+    customer_segments, loyalty, gender, age_groups = (
         get_dashboard_repository(
             REPOSITORY_CONTRACT_VERSION
         ).load_customer_insights_data(filters)
@@ -350,7 +361,7 @@ def load_customer_insights_data(
         validate_frame(customer_segments, "customer_segments"),
         loyalty,
         validate_frame(gender, "gender"),
-        validate_frame(payment_methods, "payment_methods"),
+        validate_frame(age_groups, "age_groups"),
     )
 
 
@@ -983,6 +994,12 @@ st.markdown(
             margin-bottom: 0.2rem;
         }
 
+        /* Adds breathing room below selected titles while keeping the fixed
+           card height and moving their visual content closer to the bottom. */
+        .customer-content-offset {
+            height: 0.55rem;
+        }
+
         div[data-testid="stVerticalBlock"]:has(
             > div[data-testid="stElementContainer"] .customer-card-title
         ) {
@@ -1101,7 +1118,7 @@ st.markdown(
 
         .customer-mix-legend {
             display: flex;
-            min-height: 178px;
+            min-height: 160px;
             flex-direction: column;
             justify-content: flex-start;
             gap: 1.05rem;
@@ -1189,12 +1206,70 @@ st.markdown(
 
         .gender-donut-legend {
             display: flex;
-            min-height: 104px;
+            min-height: 145px;
             flex-direction: column;
             justify-content: center;
             gap: 0.6rem;
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
+        }
+
+        .age-group-list {
+            display: grid;
+            margin-top: 0.55rem;
+            font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+        }
+
+        .age-group-row {
+            display: grid;
+            grid-template-columns: minmax(88px, 1fr) minmax(58px, 0.85fr) auto;
+            align-items: center;
+            min-height: 2.55rem;
+            gap: 0.55rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .age-group-row:last-child {
+            border-bottom: 0;
+        }
+
+        .age-group-name {
+            color: #303441;
+            font-size: 0.7rem;
+            font-weight: 650;
+            line-height: 1.2;
+        }
+
+        .age-group-range {
+            display: block;
+            margin-top: 0.15rem;
+            color: #858c99;
+            font-size: 0.61rem;
+            font-weight: 400;
+            white-space: nowrap;
+        }
+
+        .age-group-track {
+            height: 8px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #edf1fa;
+        }
+
+        .age-group-fill {
+            display: block;
+            height: 100%;
+            border-radius: inherit;
+            background: #506ac5;
+        }
+
+        .age-group-percentage {
+            color: #4a66bf;
+            font-size: 0.68rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 650;
+            white-space: nowrap;
         }
 
         .insight-progress-label {
@@ -2353,8 +2428,8 @@ def build_gender_chart(data: pd.DataFrame) -> alt.Chart:
     return (
         alt.Chart(chart_data)
         .mark_arc(
-            innerRadius=25,
-            outerRadius=44,
+            innerRadius=30,
+            outerRadius=55,
             stroke="#ffffff",
             strokeWidth=1,
         )
@@ -2374,7 +2449,7 @@ def build_gender_chart(data: pd.DataFrame) -> alt.Chart:
                 alt.Tooltip("percentage:Q", title="Redemptions", format=".1f"),
             ],
         )
-        .properties(height=105)
+        .properties(height=145)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
     )
@@ -2420,7 +2495,7 @@ category_chart = build_category_performance_chart(category_data)
 category_overview, hourly_redemptions = load_product_detail_data(dashboard_filters)
 time_of_day_chart = build_time_of_day_chart(hourly_redemptions)
 outlets, campaigns, locations = load_merchant_performance_data(dashboard_filters)
-customer_segments, loyalty, gender, payment_methods = load_customer_insights_data(
+customer_segments, loyalty, gender, age_groups = load_customer_insights_data(
     dashboard_filters
 )
 customer_mix_chart = build_customer_mix_chart(customer_segments)
@@ -2705,7 +2780,7 @@ with location_column:
 
 # -----------------------------------------------------------------------------
 # Customer Insights section
-# Summarizes customer mix, loyalty, gender, age, and payment preferences.
+# Summarizes customer mix, loyalty, gender, and age-group performance.
 # -----------------------------------------------------------------------------
 st.html('<div class="section-spacer" aria-hidden="true"></div>')
 st.html(
@@ -2716,7 +2791,7 @@ st.html(
     """
 )
 
-customer_mix_column, loyalty_column, gender_column, payment_column = st.columns(
+customer_mix_column, loyalty_column, gender_column, age_column = st.columns(
     [1.35, 1, 1.15, 1],
     gap="medium",
     vertical_alignment="top",
@@ -2729,6 +2804,7 @@ with customer_mix_column:
             'customer-card-title">'
             "Consumer Type</div>"
         )
+        st.html('<div class="customer-content-offset" aria-hidden="true"></div>')
         donut_column, customer_legend_column = st.columns(
             [0.78, 1.22],
             gap="small",
@@ -2804,6 +2880,7 @@ with gender_column:
             'customer-card-title">'
             "Redemption by Gender</div>"
         )
+        st.html('<div class="customer-content-offset" aria-hidden="true"></div>')
         gender_palette = [CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE]
         gender_colors = {
             label: gender_palette[index % len(gender_palette)]
@@ -2839,40 +2916,37 @@ with gender_column:
             st.html(
                 f'<div class="gender-donut-legend">{gender_legend_rows}</div>'
             )
-        st.html(
-            f"""
-            <div class="gender-breakdown">
-                <div class="top-age-group">
-                    <div class="top-age-label">Top Age Group</div>
-                    <div class="top-age-value">
-                        {escape(str(loyalty["top_age_group"]))}
-                        ({float(loyalty["top_age_group_percentage"]):.0f}%)
-                    </div>
-                </div>
-            </div>
-            """
-        )
-
-with payment_column:
+with age_column:
     with st.container(border=True, height=CUSTOMER_INSIGHTS_CARD_HEIGHT):
         st.html(
             '<div class="analytics-title native-chart-title product-card-title '
             'customer-card-title">'
-            "Payment Method</div>"
+            "Age Group</div>"
         )
-        payment_rows = "".join(
+        maximum_age_percentage = float(age_groups["percentage"].max())
+        age_group_rows = "".join(
             f"""
-            <div class="payment-row">
-                <span class="payment-method">{escape(str(row.method))}</span>
-                <div class="insight-progress-track">
-                    <div
-                        class="insight-progress-fill"
-                        style="width:{row.percentage:.1f}%"
-                    ></div>
+            <div class="age-group-row">
+                <div class="age-group-name">
+                    {escape(str(row.age_group))}
+                    <span class="age-group-range">
+                        ({escape(str(row.age_range).replace(' years', ''))})
+                    </span>
                 </div>
-                <span class="payment-percentage">{row.percentage:.0f}%</span>
+                <div class="age-group-track" aria-hidden="true">
+                    <span
+                        class="age-group-fill"
+                        style="width:{row.percentage / maximum_age_percentage * 100:.1f}%"
+                    ></span>
+                </div>
+                <div class="age-group-percentage">
+                    {row.percentage:.0f}%
+                </div>
             </div>
             """
-            for row in payment_methods.itertuples(index=False)
+            for row in age_groups.itertuples(index=False)
         )
-        st.html(f'<div class="payment-breakdown">{payment_rows}</div>')
+        st.html(
+            f'<div class="age-group-list" aria-label="Age group redemption">'
+            f"{age_group_rows}</div>"
+        )

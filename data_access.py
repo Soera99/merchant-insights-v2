@@ -388,8 +388,6 @@ class MockDashboardRepository:
         loyalty = {
             "average_transactions": 3.7,
             "repeat_customer_percentage": 28.0,
-            "top_age_group": "25 – 34 years",
-            "top_age_group_percentage": 42.0,
         }
         gender = pd.DataFrame(
             {
@@ -397,13 +395,24 @@ class MockDashboardRepository:
                 "percentage": [54.0, 46.0],
             }
         )
-        payment_methods = pd.DataFrame(
+        age_groups = pd.DataFrame(
             {
-                "method": ["E-Wallet", "QR Payment", "Cash", "Card"],
-                "percentage": [56.0, 28.0, 11.0, 5.0],
+                "age_group": [
+                    "Generation Z",
+                    "Millennials",
+                    "Generation X",
+                    "Baby Boomers",
+                ],
+                "age_range": [
+                    "18 – 29 years",
+                    "30 – 45 years",
+                    "46 – 61 years",
+                    "62+ years",
+                ],
+                "percentage": [26.0, 42.0, 21.0, 11.0],
             }
         )
-        return customer_segments, loyalty, gender, payment_methods
+        return customer_segments, loyalty, gender, age_groups
 
 
 # -----------------------------------------------------------------------------
@@ -446,7 +455,7 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
     "leaderboard": {"name", "redemptions"},
     "customer_segments": {"segment", "customers"},
     "gender": {"gender", "percentage"},
-    "payment_methods": {"method", "percentage"},
+    "age_groups": {"age_group", "age_range", "percentage"},
 }
 
 
