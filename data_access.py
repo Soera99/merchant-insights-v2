@@ -15,8 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from importlib import import_module
+import json
 import os
 from typing import Protocol, runtime_checkable
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
@@ -416,6 +419,722 @@ class MockDashboardRepository:
 
 
 # -----------------------------------------------------------------------------
+# Backend API repository
+# Every live dashboard endpoint uses the authenticated dashboard user's ID as
+# the first request value and shares the same province, city, and date filters.
+# -----------------------------------------------------------------------------
+class ApiDashboardRepository(MockDashboardRepository):
+    """Use the live backend APIs for every dashboard business-data section."""
+
+    FILTER_OPTIONS_PATH = "/api/v1/partners/dashboard/filter-options"
+    KPI_PATH = "/api/v1/partners/dashboard/kpis"
+    CAMPAIGN_KPI_PATH = "/api/v1/partners/dashboard/campaign-performance/kpis"
+    CAMPAIGN_FUNNEL_PATH = (
+        "/api/v1/partners/dashboard/campaign-performance/funnel"
+    )
+    CAMPAIGN_TREND_PATH = (
+        "/api/v1/partners/dashboard/campaign-performance/redemption-trend"
+    )
+    PRODUCT_TOP_CATEGORIES_PATH = (
+        "/api/v1/partners/dashboard/product-performance/top-categories"
+    )
+    PRODUCT_TOP_SAMPLED_PATH = (
+        "/api/v1/partners/dashboard/product-performance/top-sampled-products"
+    )
+    PRODUCT_TOP_PRODUCTS_PATH = (
+        "/api/v1/partners/dashboard/product-performance/top-products"
+    )
+    PRODUCT_CATEGORY_OVERVIEW_PATH = (
+        "/api/v1/partners/dashboard/product-performance/category-overview"
+    )
+    PRODUCT_REDEMPTION_TIME_PATH = (
+        "/api/v1/partners/dashboard/product-performance/redemption-time"
+    )
+    PRODUCT_REDEMPTION_CHANNEL_PATH = (
+        "/api/v1/partners/dashboard/product-performance/redemption-channel"
+    )
+    MERCHANT_BEST_OUTLETS_PATH = (
+        "/api/v1/partners/dashboard/merchant-performance/best-outlets"
+    )
+    MERCHANT_BEST_CAMPAIGNS_PATH = (
+        "/api/v1/partners/dashboard/merchant-performance/best-campaigns"
+    )
+    MERCHANT_TOP_LOCATIONS_PATH = (
+        "/api/v1/partners/dashboard/merchant-performance/top-locations"
+    )
+    CUSTOMER_CONSUMER_TYPE_PATH = (
+        "/api/v1/partners/dashboard/customer-insights/consumer-type"
+    )
+    CUSTOMER_LOYALTY_PATH = (
+        "/api/v1/partners/dashboard/customer-insights/customer-loyalty"
+    )
+    CUSTOMER_GENDER_PATH = (
+        "/api/v1/partners/dashboard/customer-insights/redemption-gender"
+    )
+    CUSTOMER_AGE_GROUP_PATH = (
+        "/api/v1/partners/dashboard/customer-insights/age-group"
+    )
+    CAMPAIGN_METRIC_KEYS = (
+        "campaign_views",
+        "campaign_clicks",
+        "click_through_rate",
+        "claim_rate",
+        "total_vouchers_redeemed",
+        "total_redemption_value",
+        "average_transaction_value",
+    )
+
+    def __init__(
+        self,
+        base_url: str,
+        user_id: str,
+        timeout_seconds: float = 10.0,
+        bearer_token: str = "",
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.user_id = user_id
+        self.timeout_seconds = timeout_seconds
+        self.bearer_token = bearer_token
+
+    def _post(self, path: str, values: list[str]) -> dict[str, object]:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if self.bearer_token:
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
+
+        request = Request(
+            f"{self.base_url}{path}",
+            data=json.dumps({"values": values}).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                payload = json.load(response)
+        except HTTPError as exc:
+            raise RuntimeError(
+                f"Dashboard API returned HTTP {exc.code} for {path}"
+            ) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Dashboard API request failed for {path}: {exc.reason}"
+            ) from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(f"Dashboard API returned invalid JSON for {path}") from exc
+
+        if not isinstance(payload, dict):
+            raise ValueError(f"Dashboard API response for {path} must be an object")
+        return payload
+
+    def _filter_values(self, filters: DashboardFilters) -> list[str]:
+        return [
+            self.user_id,
+            filters.province,
+            filters.city,
+            filters.start_date.isoformat(),
+            filters.end_date.isoformat(),
+        ]
+
+    def _load_query_out(
+        self,
+        path: str,
+        filters: DashboardFilters,
+        dataset_name: str,
+    ) -> list[dict[str, object]]:
+        payload = self._post(path, self._filter_values(filters))
+        response_content = payload.get("content", payload)
+        try:
+            query_out = response_content["vars"]["query_out"]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                f"{dataset_name} response must contain vars.query_out or "
+                "content.vars.query_out"
+            ) from exc
+
+        if not isinstance(query_out, list) or any(
+            not isinstance(row, dict) for row in query_out
+        ):
+            raise ValueError(f"{dataset_name} query_out must be a list of objects")
+        return query_out
+
+    @staticmethod
+    def _normalized_frame(
+        rows: list[dict[str, object]],
+        columns: list[str],
+        aliases: dict[str, tuple[str, ...]],
+        dataset_name: str,
+        defaults: dict[str, object] | None = None,
+    ) -> pd.DataFrame:
+        """Map backend field aliases and preserve schemas for empty results."""
+        if not rows:
+            return pd.DataFrame(columns=columns)
+
+        frame = pd.DataFrame(rows)
+        rename_map: dict[str, str] = {}
+        for target, candidates in aliases.items():
+            if target in frame.columns:
+                continue
+            source = next(
+                (candidate for candidate in candidates if candidate in frame.columns),
+                None,
+            )
+            if source is not None:
+                rename_map[source] = target
+        frame = frame.rename(columns=rename_map)
+
+        for column, default_value in (defaults or {}).items():
+            if column not in frame.columns:
+                frame[column] = default_value
+
+        missing = set(columns).difference(frame.columns)
+        if missing:
+            names = ", ".join(sorted(missing))
+            raise ValueError(f"{dataset_name} is missing: {names}")
+        return frame.loc[:, columns].copy()
+
+    def load_filter_options(self) -> dict[str, list[str]]:
+        payload = self._post(self.FILTER_OPTIONS_PATH, [self.user_id])
+        response_content = payload.get("content", payload)
+        try:
+            filter_options = response_content["vars"]["filter_options"]
+        except (KeyError, TypeError) as exc:
+            raise ValueError(
+                "Filter-options response must contain vars.filter_options "
+                "or content.vars.filter_options"
+            ) from exc
+
+        if not isinstance(filter_options, dict) or not filter_options:
+            raise ValueError("vars.filter_options must be a non-empty object")
+
+        normalized: dict[str, list[str]] = {}
+        for province, cities in filter_options.items():
+            if not isinstance(province, str) or not province:
+                raise ValueError(
+                    "Every filter-options province must be a non-empty string"
+                )
+            if (
+                not isinstance(cities, list)
+                or not cities
+                or any(not isinstance(city, str) or not city for city in cities)
+            ):
+                raise ValueError(
+                    f"Filter-options cities for {province!r} must be a "
+                    "non-empty string list"
+                )
+
+            ordered_cities = list(dict.fromkeys(cities))
+            if "All Cities" in ordered_cities:
+                ordered_cities.remove("All Cities")
+                ordered_cities.insert(0, "All Cities")
+            normalized[province] = ordered_cities
+
+        if "All Provinces" in normalized:
+            all_provinces = normalized.pop("All Provinces")
+            normalized = {"All Provinces": all_provinces, **normalized}
+        return normalized
+
+    def load_kpi_data(self, filters: DashboardFilters) -> pd.DataFrame:
+        query_out = self._load_query_out(self.KPI_PATH, filters, "KPI")
+        return pd.DataFrame(query_out)
+
+    def load_dashboard_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        query_out = self._load_query_out(
+            self.CAMPAIGN_TREND_PATH,
+            filters,
+            "Campaign redemption trend",
+        )
+        trend_data = self._normalized_frame(
+            query_out,
+            ["period", "vouchers_redeemed", "redemption_value"],
+            {
+                "period": ("date", "redemption_date"),
+                "vouchers_redeemed": ("redemption_count", "redeemed_count"),
+                "redemption_value": ("total_redemption_value",),
+            },
+            "Campaign redemption trend",
+        )
+        required = {"period", "vouchers_redeemed", "redemption_value"}
+        missing = required.difference(trend_data.columns)
+        if missing:
+            columns = ", ".join(sorted(missing))
+            raise ValueError(f"Campaign redemption trend is missing: {columns}")
+
+        if trend_data.empty:
+            trend_data["average_transaction_value"] = pd.Series(dtype="float64")
+        else:
+            parsed_periods = pd.to_datetime(trend_data["period"], errors="coerce")
+            if parsed_periods.isna().any():
+                raise ValueError(
+                    "Campaign redemption trend contains an invalid period"
+                )
+            trend_data["period"] = parsed_periods.dt.strftime("%d %b")
+            voucher_counts = pd.to_numeric(
+                trend_data["vouchers_redeemed"], errors="coerce"
+            )
+            redemption_values = pd.to_numeric(
+                trend_data["redemption_value"], errors="coerce"
+            )
+            if voucher_counts.isna().any() or redemption_values.isna().any():
+                raise ValueError("Campaign redemption trend values must be numeric")
+            trend_data["average_transaction_value"] = redemption_values.div(
+                voucher_counts.where(voucher_counts != 0),
+            ).fillna(0.0)
+
+        channel_rows = self._load_query_out(
+            self.PRODUCT_REDEMPTION_CHANNEL_PATH,
+            filters,
+            "Product redemption channel",
+        )
+        channel_data = self._normalized_frame(
+            channel_rows,
+            ["channel", "redemptions"],
+            {"redemptions": ("redemption_count", "redeemed_count", "count")},
+            "Product redemption channel",
+        )
+        return trend_data, channel_data
+
+    def load_campaign_performance_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        metric_rows = self._load_query_out(
+            self.CAMPAIGN_KPI_PATH,
+            filters,
+            "Campaign KPI",
+        )
+        if not metric_rows:
+            metric_values = {
+                metric_key: 0 for metric_key in self.CAMPAIGN_METRIC_KEYS
+            }
+        elif len(metric_rows) != 1:
+            raise ValueError("Campaign KPI query_out must contain exactly one object")
+        else:
+            metric_values = metric_rows[0]
+        missing_metrics = set(self.CAMPAIGN_METRIC_KEYS).difference(metric_values)
+        if missing_metrics:
+            keys = ", ".join(sorted(missing_metrics))
+            raise ValueError(f"Campaign KPI response is missing metrics: {keys}")
+        campaign_metrics = pd.DataFrame(
+            [
+                {
+                    "metric_key": metric_key,
+                    "value": metric_values[metric_key],
+                    "change_pct": 0.0,
+                    "comparison_label": "comparison not implemented",
+                }
+                for metric_key in self.CAMPAIGN_METRIC_KEYS
+            ]
+        )
+
+        funnel_rows = self._load_query_out(
+            self.CAMPAIGN_FUNNEL_PATH,
+            filters,
+            "Campaign funnel",
+        )
+        funnel_data = self._normalized_frame(
+            funnel_rows,
+            ["stage", "count", "stage_order"],
+            {"count": ("value", "consumer_count")},
+            "Campaign funnel",
+        )
+        required_funnel = {"stage", "count", "stage_order"}
+        missing_funnel = required_funnel.difference(funnel_data.columns)
+        if missing_funnel:
+            columns = ", ".join(sorted(missing_funnel))
+            raise ValueError(f"Campaign funnel is missing: {columns}")
+        funnel_data["count"] = pd.to_numeric(funnel_data["count"], errors="coerce")
+        if funnel_data["count"].isna().any():
+            raise ValueError("Campaign funnel values must be numeric")
+        denominator = funnel_data["count"].max()
+        funnel_data["percentage"] = (
+            funnel_data["count"].div(denominator).mul(100.0)
+            if denominator > 0
+            else 0.0
+        )
+        return campaign_metrics, funnel_data
+
+    def load_product_performance_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        category_rows = self._load_query_out(
+            self.PRODUCT_TOP_CATEGORIES_PATH, filters, "Top categories"
+        )
+        category_data = self._normalized_frame(
+            category_rows,
+            ["category", "redeemed", "sampling"],
+            {
+                "category": ("category_name", "name"),
+                "redeemed": (
+                    "redemption_count",
+                    "redeemed_count",
+                    "vouchers_redeemed",
+                ),
+                "sampling": (
+                    "sampling_count",
+                    "sampled_count",
+                    "sample_count",
+                    "samples",
+                ),
+            },
+            "Top categories",
+        )
+
+        sampled_rows = self._load_query_out(
+            self.PRODUCT_TOP_SAMPLED_PATH, filters, "Top sampled products"
+        )
+        sampled_products = self._normalized_frame(
+            sampled_rows,
+            ["product", "count"],
+            {
+                "product": ("product_name", "name", "title"),
+                "count": (
+                    "sampling_count",
+                    "sampled_count",
+                    "sample_count",
+                    "samples",
+                ),
+            },
+            "Top sampled products",
+        )
+
+        product_rows = self._load_query_out(
+            self.PRODUCT_TOP_PRODUCTS_PATH, filters, "Top products"
+        )
+        redeemed_products = self._normalized_frame(
+            product_rows,
+            ["product", "count"],
+            {
+                "product": ("product_name", "name", "title"),
+                "count": (
+                    "redemption_count",
+                    "redeemed_count",
+                    "vouchers_redeemed",
+                ),
+            },
+            "Top products",
+        )
+        return category_data, sampled_products, redeemed_products
+
+    def load_product_detail_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        overview_rows = self._load_query_out(
+            self.PRODUCT_CATEGORY_OVERVIEW_PATH,
+            filters,
+            "Category overview",
+        )
+        category_overview = self._normalized_frame(
+            overview_rows,
+            [
+                "category",
+                "vouchers_redeemed",
+                "redeemed_share",
+                "redemption_value",
+                "unique_customers",
+                "conversion_rate",
+            ],
+            {
+                "category": ("category_name", "name"),
+                "vouchers_redeemed": ("redemption_count", "redeemed_count"),
+                "redeemed_share": (
+                    "redemption_share",
+                    "redemption_percentage",
+                    "share_pct",
+                    "percentage",
+                ),
+                "redemption_value": ("total_redemption_value",),
+                "unique_customers": ("customer_count", "consumer_count"),
+                "conversion_rate": ("conversion_pct",),
+            },
+            "Category overview",
+            defaults={
+                "redemption_value": 0,
+                "unique_customers": 0,
+                "conversion_rate": 0.0,
+            },
+        )
+
+        time_rows = self._load_query_out(
+            self.PRODUCT_REDEMPTION_TIME_PATH,
+            filters,
+            "Redemption time",
+        )
+        hourly_redemptions = self._normalized_frame(
+            time_rows,
+            ["hour", "redemptions"],
+            {"redemptions": ("redemption_count", "redeemed_count", "count")},
+            "Redemption time",
+        )
+        hourly_redemptions["time_range"] = hourly_redemptions["hour"].map(
+            lambda hour: f"{int(hour):02d}:00 – {(int(hour) + 1):02d}:00"
+        )
+        hourly_redemptions["selected_label"] = hourly_redemptions.apply(
+            lambda row: f"{row['time_range']}  •  {row['redemptions']:,.0f}",
+            axis=1,
+        )
+        return category_overview, hourly_redemptions
+
+    def _load_leaderboard(
+        self,
+        path: str,
+        filters: DashboardFilters,
+        dataset_name: str,
+        name_aliases: tuple[str, ...],
+    ) -> pd.DataFrame:
+        rows = self._load_query_out(path, filters, dataset_name)
+        return self._normalized_frame(
+            rows,
+            ["name", "redemptions"],
+            {
+                "name": name_aliases,
+                "redemptions": (
+                    "redemption_count",
+                    "redeemed_count",
+                    "vouchers_redeemed",
+                    "count",
+                ),
+            },
+            dataset_name,
+        )
+
+    def load_merchant_performance_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        outlets = self._load_leaderboard(
+            self.MERCHANT_BEST_OUTLETS_PATH,
+            filters,
+            "Best outlets",
+            ("store_name", "outlet_name", "merchant_name"),
+        )
+        campaigns = self._load_leaderboard(
+            self.MERCHANT_BEST_CAMPAIGNS_PATH,
+            filters,
+            "Best campaigns",
+            ("campaign_name", "voucher_program_name"),
+        )
+        locations = self._load_leaderboard(
+            self.MERCHANT_TOP_LOCATIONS_PATH,
+            filters,
+            "Top locations",
+            ("location", "city", "city_name", "province"),
+        )
+        return outlets, campaigns, locations
+
+    def load_customer_insights_data(
+        self,
+        filters: DashboardFilters,
+    ) -> tuple[
+        pd.DataFrame,
+        dict[str, float | str],
+        pd.DataFrame,
+        pd.DataFrame,
+    ]:
+        segment_rows = self._load_query_out(
+            self.CUSTOMER_CONSUMER_TYPE_PATH, filters, "Consumer type"
+        )
+        customer_segments = self._normalized_frame(
+            segment_rows,
+            ["segment", "customers"],
+            {
+                "segment": ("consumer_type", "customer_type", "type", "name"),
+                "customers": (
+                    "customer_count",
+                    "consumer_count",
+                    "total_consumers",
+                    "count",
+                ),
+            },
+            "Consumer type",
+        )
+
+        loyalty_rows = self._load_query_out(
+            self.CUSTOMER_LOYALTY_PATH, filters, "Customer loyalty"
+        )
+        if loyalty_rows and "loyalty_type" in loyalty_rows[0]:
+            loyalty_frame = pd.DataFrame(loyalty_rows)
+            repeat_rows = loyalty_frame.loc[
+                loyalty_frame["loyalty_type"]
+                .astype(str)
+                .str.lower()
+                .str.contains("repeat")
+            ]
+            if not repeat_rows.empty and "percentage" in repeat_rows.columns:
+                repeat_percentage = float(repeat_rows.iloc[0]["percentage"])
+            elif "customer_count" in loyalty_frame.columns:
+                counts = pd.to_numeric(
+                    loyalty_frame["customer_count"], errors="coerce"
+                ).fillna(0)
+                repeat_count = counts.loc[repeat_rows.index].sum()
+                repeat_percentage = (
+                    float(repeat_count / counts.sum() * 100)
+                    if counts.sum()
+                    else 0.0
+                )
+            else:
+                repeat_percentage = 0.0
+            average_source = next(
+                (
+                    column
+                    for column in (
+                        "average_transactions",
+                        "avg_transactions",
+                        "average_transactions_per_customer",
+                        "avg_transactions_per_customer",
+                    )
+                    if column in loyalty_frame.columns
+                ),
+                None,
+            )
+            loyalty = {
+                "average_transactions": (
+                    float(loyalty_frame.iloc[0][average_source])
+                    if average_source
+                    else 0.0
+                ),
+                "repeat_customer_count": (
+                    int(
+                        pd.to_numeric(
+                            repeat_rows.iloc[0].get("customer_count", 0),
+                            errors="coerce",
+                        )
+                    )
+                    if not repeat_rows.empty
+                    else 0
+                ),
+                "repeat_customer_percentage": repeat_percentage,
+            }
+        else:
+            loyalty_frame = self._normalized_frame(
+                loyalty_rows,
+                ["average_transactions", "repeat_customer_percentage"],
+                {
+                    "average_transactions": (
+                        "avg_transactions",
+                        "average_transactions_per_customer",
+                        "avg_transactions_per_customer",
+                    ),
+                    "repeat_customer_percentage": (
+                        "repeat_customer_pct",
+                        "repeat_percentage",
+                        "repeat_rate",
+                    ),
+                },
+                "Customer loyalty",
+            )
+            loyalty = (
+                {
+                    "average_transactions": loyalty_frame.iloc[0][
+                        "average_transactions"
+                    ],
+                    "repeat_customer_percentage": loyalty_frame.iloc[0][
+                        "repeat_customer_percentage"
+                    ],
+                }
+                if not loyalty_frame.empty
+                else {
+                    "average_transactions": 0.0,
+                    "repeat_customer_percentage": 0.0,
+                }
+            )
+
+        gender_rows = self._load_query_out(
+            self.CUSTOMER_GENDER_PATH, filters, "Redemption gender"
+        )
+        gender = self._percentage_frame(
+            gender_rows,
+            label="gender",
+            label_aliases=("gender_name", "name"),
+            dataset_name="Redemption gender",
+        )
+
+        age_rows = self._load_query_out(
+            self.CUSTOMER_AGE_GROUP_PATH, filters, "Age group"
+        )
+        age_groups = self._normalized_frame(
+            age_rows,
+            ["age_group", "age_range", "percentage"],
+            {
+                "age_group": ("generation", "group", "name"),
+                "age_range": ("range", "age_range_label"),
+                "percentage": (
+                    "redemption_percentage",
+                    "share_pct",
+                    "share",
+                ),
+            },
+            "Age group",
+            defaults={"age_range": ""},
+        )
+        return customer_segments, loyalty, gender, age_groups
+
+    def _percentage_frame(
+        self,
+        rows: list[dict[str, object]],
+        label: str,
+        label_aliases: tuple[str, ...],
+        dataset_name: str,
+    ) -> pd.DataFrame:
+        if not rows:
+            return pd.DataFrame(columns=[label, "percentage"])
+        frame = pd.DataFrame(rows)
+        if label not in frame.columns:
+            source = next(
+                (name for name in label_aliases if name in frame.columns), None
+            )
+            if source is not None:
+                frame = frame.rename(columns={source: label})
+        if "percentage" not in frame.columns:
+            percentage_source = next(
+                (
+                    name
+                    for name in (
+                        "redemption_percentage",
+                        "share_pct",
+                        "share",
+                    )
+                    if name in frame.columns
+                ),
+                None,
+            )
+            if percentage_source is not None:
+                frame = frame.rename(columns={percentage_source: "percentage"})
+            else:
+                count_source = next(
+                    (
+                        name
+                        for name in (
+                            "redemption_count",
+                            "redeemed_count",
+                            "count",
+                        )
+                        if name in frame.columns
+                    ),
+                    None,
+                )
+                if count_source is not None:
+                    counts = pd.to_numeric(frame[count_source], errors="coerce")
+                    total = counts.sum()
+                    frame["percentage"] = (
+                        counts.div(total).mul(100) if total else 0.0
+                    )
+        missing = {label, "percentage"}.difference(frame.columns)
+        if missing:
+            names = ", ".join(sorted(missing))
+            raise ValueError(f"{dataset_name} is missing: {names}")
+        if label == "gender":
+            frame[label] = frame[label].astype(str).str.replace("_", " ").str.title()
+        return frame[[label, "percentage"]].copy()
+
+
+# -----------------------------------------------------------------------------
 # Data schemas
 # These checks fail early when a backend query returns missing columns.
 # -----------------------------------------------------------------------------
@@ -482,7 +1201,30 @@ def create_dashboard_repository() -> DashboardRepository:
     """Create the configured repository, defaulting to local demo data."""
     factory_path = os.getenv("DASHBOARD_REPOSITORY_FACTORY", "").strip()
     if not factory_path:
-        return MockDashboardRepository()
+        base_url = os.getenv("DASHBOARD_API_BASE_URL", "").strip()
+        user_id = os.getenv("DASHBOARD_USER_ID", "").strip()
+        legacy_partner_id = os.getenv("DASHBOARD_PARTNER_ID", "").strip()
+        dashboard_user_id = user_id or legacy_partner_id
+        if not base_url and not dashboard_user_id:
+            return MockDashboardRepository()
+        if not base_url or not dashboard_user_id:
+            raise ValueError(
+                "DASHBOARD_API_BASE_URL and DASHBOARD_USER_ID must be set together"
+            )
+        try:
+            timeout_seconds = float(
+                os.getenv("DASHBOARD_API_TIMEOUT_SECONDS", "10").strip()
+            )
+        except ValueError as exc:
+            raise ValueError("DASHBOARD_API_TIMEOUT_SECONDS must be a number") from exc
+        if timeout_seconds <= 0:
+            raise ValueError("DASHBOARD_API_TIMEOUT_SECONDS must be greater than zero")
+        return ApiDashboardRepository(
+            base_url=base_url,
+            user_id=dashboard_user_id,
+            timeout_seconds=timeout_seconds,
+            bearer_token=os.getenv("DASHBOARD_API_BEARER_TOKEN", "").strip(),
+        )
 
     try:
         module_name, factory_name = factory_path.split(":", maxsplit=1)

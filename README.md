@@ -99,6 +99,66 @@ DataFrame columns and raises a clear error if the backend contract changes.
 The authoritative method signatures and schemas are in
 [`data_access.py`](data_access.py).
 
+### Dashboard API
+
+All dashboard sections use the backend dashboard API when API configuration is
+present. Configure:
+
+```bash
+export DASHBOARD_API_BASE_URL='https://your-api.example.com'
+export DASHBOARD_USER_ID='019f0000-0000-7000-8000-000000000001'
+streamlit run app.py
+```
+
+The dashboard sends `POST /api/v1/partners/dashboard/filter-options` with the
+user ID as the first item in `values`, then maps
+`content.vars.filter_options` (or an unwrapped `vars.filter_options`) to the
+Province and City selectors. An optional bearer token can be supplied through
+`DASHBOARD_API_BEARER_TOKEN`; request timeout can be adjusted with
+`DASHBOARD_API_TIMEOUT_SECONDS` (default: 10 seconds).
+
+KPI cards use `POST /api/v1/partners/dashboard/kpis`. The request values are
+sent in this exact order: user ID, province, city, ISO start date, and ISO
+end date. The dashboard maps `content.vars.query_out` (or an unwrapped
+`vars.query_out`) to the nine KPI cards.
+
+Campaign Performance uses three more endpoints with the same ordered filter
+values:
+
+- `POST /api/v1/partners/dashboard/campaign-performance/kpis`
+- `POST /api/v1/partners/dashboard/campaign-performance/funnel`
+- `POST /api/v1/partners/dashboard/campaign-performance/redemption-trend`
+
+The dashboard converts the campaign KPI object into card rows, derives funnel
+percentages from the largest returned stage, and calculates each trend point's
+average transaction value as redemption value divided by vouchers redeemed.
+
+Product Performance uses:
+
+- `POST /api/v1/partners/dashboard/product-performance/top-categories`
+- `POST /api/v1/partners/dashboard/product-performance/top-sampled-products`
+- `POST /api/v1/partners/dashboard/product-performance/top-products`
+- `POST /api/v1/partners/dashboard/product-performance/category-overview`
+- `POST /api/v1/partners/dashboard/product-performance/redemption-time`
+- `POST /api/v1/partners/dashboard/product-performance/redemption-channel`
+
+Merchant Performance uses:
+
+- `POST /api/v1/partners/dashboard/merchant-performance/best-outlets`
+- `POST /api/v1/partners/dashboard/merchant-performance/best-campaigns`
+- `POST /api/v1/partners/dashboard/merchant-performance/top-locations`
+
+Customer Insights uses:
+
+- `POST /api/v1/partners/dashboard/customer-insights/consumer-type`
+- `POST /api/v1/partners/dashboard/customer-insights/customer-loyalty`
+- `POST /api/v1/partners/dashboard/customer-insights/redemption-gender`
+- `POST /api/v1/partners/dashboard/customer-insights/age-group`
+
+Every endpoint receives the same ordered filter values. Empty `query_out`
+lists are treated as valid no-data results, so the dashboard remains available
+instead of raising a missing-column exception.
+
 ### Required datasets
 
 - KPI: `metric_key`, `value`, `change_pct`, `comparison_label`
@@ -156,3 +216,34 @@ using:
 
 Streamlit installs the packages in `requirements.txt`. Each push to `main`
 automatically updates the deployed app.
+
+Configure these values in the hosting platform's secret/environment settings,
+not in the repository:
+
+```toml
+DASHBOARD_API_BASE_URL = "https://anexa-api-service-735112988988.asia-southeast2.run.app"
+DASHBOARD_USER_ID = "019f0000-0000-7000-8000-000000000001"
+DASHBOARD_API_TIMEOUT_SECONDS = "30"
+```
+
+After deployment, give the frontend team the public HTTPS dashboard URL. They
+can embed it with an iframe similar to:
+
+```html
+<iframe
+  src="https://your-dashboard-host.example"
+  title="Merchant Insights"
+  width="100%"
+  height="1200"
+  style="border: 0"
+  loading="lazy"
+></iframe>
+```
+
+The environment-based `DASHBOARD_USER_ID` configuration is suitable only for a
+single organization or a demo: every iframe visitor sees that same user's
+dashboard. A multi-tenant production integration must use the web app's logged-
+in session to issue a signed, short-lived embed token containing the authorized
+user/organization ID. The dashboard and backend must validate that token before
+loading data. Do not accept an unsigned `user_id` iframe query parameter,
+because visitors could change it to request another organization's data.
