@@ -234,7 +234,7 @@ CAMPAIGN_SUMMARY_METRICS = [
 
 # Increment this number whenever the DashboardRepository protocol gains or
 # changes a method. It prevents Streamlit from reusing an older cached object.
-REPOSITORY_CONTRACT_VERSION = 5
+REPOSITORY_CONTRACT_VERSION = 9
 
 
 # -----------------------------------------------------------------------------
@@ -1272,6 +1272,10 @@ st.markdown(
             white-space: nowrap;
         }
 
+        .age-group-percentage.placeholder {
+            color: #9aa1af;
+        }
+
         .insight-progress-label {
             display: flex;
             align-items: center;
@@ -1669,7 +1673,7 @@ with city_column:
 with date_column:
     selected_date_range = st.date_input(
         "Date",
-        value=(date(2026, 5, 1), date(2026, 5, 31)),
+        value=(date(2026, 8, 1), date(2026, 8, 18)),
         format="DD/MM/YYYY",
         key="dashboard_date_range",
     )
@@ -1912,38 +1916,16 @@ if False:  # Legacy static prototype kept temporarily for design reference.
 # Each function turns one validated backend DataFrame into an Altair chart.
 # -----------------------------------------------------------------------------
 def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
-    """Create the interactive stacked-bar and transaction-value trend chart."""
+    """Create the live voucher-redemption and redemption-value trend chart."""
     period_order = data["period"].tolist()
-    bar_series_order = [
-        "Voucher Redeemed",
-        "Redemption Value (Rp)",
-    ]
-    voucher_bars = pd.DataFrame(
-        {
-            "period": data["period"],
-            "series": "Voucher Redeemed",
-            "plot_value": data["vouchers_redeemed"],
-            "display_value": data["vouchers_redeemed"].map(lambda value: f"{value:,}"),
-            "stack_order": 0,
-        }
-    )
-    redemption_bars = pd.DataFrame(
-        {
-            "period": data["period"],
-            "series": "Redemption Value (Rp)",
-            # Scale currency for a readable stacked visual; tooltips retain Rp.
-            "plot_value": data["redemption_value"] / 10_000,
-            "display_value": data["redemption_value"].map(
-                lambda value: f"Rp {value / 1_000_000:.1f}M"
-            ),
-            "stack_order": 1,
-        }
-    )
-    bar_data = pd.concat([voucher_bars, redemption_bars], ignore_index=True)
-
     bars = (
-        alt.Chart(bar_data)
-        .mark_bar(size=46, cornerRadiusTopLeft=3, cornerRadiusTopRight=3)
+        alt.Chart(data)
+        .mark_bar(
+            color=CAMPAIGN_CHART_BLUE,
+            size=46,
+            cornerRadiusTopLeft=3,
+            cornerRadiusTopRight=3,
+        )
         .encode(
             x=alt.X(
                 "period:N",
@@ -1952,47 +1934,28 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
                 axis=alt.Axis(labelAngle=0, labelPadding=10, tickSize=0),
             ),
             y=alt.Y(
-                "plot_value:Q",
-                stack="zero",
-                title=None,
-                axis=alt.Axis(format="~s", grid=True, tickCount=5),
-                scale=alt.Scale(domain=[0, 9000]),
+                "vouchers_redeemed:Q",
+                title="Vouchers",
+                axis=alt.Axis(format=",", grid=True, tickCount=5),
+                scale=alt.Scale(zero=True),
             ),
-            color=alt.Color(
-                "series:N",
-                title=None,
-                scale=alt.Scale(
-                    domain=bar_series_order,
-                    # Match the dark-blue and pale-blue Conversion Funnel.
-                    range=[CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE],
-                ),
-                legend=alt.Legend(
-                    orient="top",
-                    direction="horizontal",
-                    symbolType="square",
-                    symbolStrokeColor="transparent",
-                    symbolStrokeWidth=0,
-                    # Increase this value for more legend-to-chart spacing.
-                    offset=24,
-                ),
-            ),
-            order=alt.Order("stack_order:Q"),
             tooltip=[
                 alt.Tooltip("period:N", title="Period"),
-                alt.Tooltip("series:N", title="Metric"),
-                alt.Tooltip("display_value:N", title="Value"),
+                alt.Tooltip(
+                    "vouchers_redeemed:Q",
+                    title="Vouchers Redeemed",
+                    format=",",
+                ),
             ],
         )
     )
 
-    line_data = data.copy()
-    line_data["series"] = "Average Transaction Value (Rp)"
-    average_line = (
-        alt.Chart(line_data)
+    redemption_line = (
+        alt.Chart(data)
         .mark_line(
-            color=CAMPAIGN_CHART_BLUE,
+            color=CAMPAIGN_CHART_TONES[1],
             point=alt.OverlayMarkDef(
-                color=CAMPAIGN_CHART_BLUE,
+                color=CAMPAIGN_CHART_TONES[1],
                 filled=True,
                 size=65,
                 stroke="white",
@@ -2003,68 +1966,34 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
         .encode(
             x=alt.X("period:N", sort=period_order, title=None),
             y=alt.Y(
-                "average_transaction_value:Q",
-                title=None,
+                "redemption_value:Q",
+                title="Redemption Value (Rp)",
                 axis=alt.Axis(
                     orient="right",
                     format="~s",
                     grid=False,
                     tickCount=5,
                 ),
-                # Lower this maximum to move the line higher; raise it to move
-                # the line closer to the bars.
-                scale=alt.Scale(domain=[0, 8_600]),
+                scale=alt.Scale(zero=True),
             ),
             tooltip=[
                 alt.Tooltip("period:N", title="Period"),
                 alt.Tooltip(
+                    "redemption_value:Q",
+                    title="Redemption Value (Rp)",
+                    format=",.0f",
+                ),
+                alt.Tooltip(
                     "average_transaction_value:Q",
-                    title="Average Transaction",
+                    title="Average Transaction (Rp)",
                     format=",.0f",
                 ),
             ],
         )
     )
 
-    # This off-canvas point creates a square outline specifically for the
-    # line legend, while the actual chart line stays solid.
-    line_legend = (
-        alt.Chart(pd.DataFrame({"series": ["Average Transaction Value (Rp)"]}))
-        .mark_point(
-            shape="square",
-            filled=True,
-            fill="#ffffff",
-            stroke=CAMPAIGN_CHART_BLUE,
-            strokeWidth=2,
-            size=150,
-            clip=True,
-        )
-        .encode(
-            x=alt.value(-100),
-            y=alt.value(-100),
-            stroke=alt.Stroke(
-                "series:N",
-                title=None,
-                scale=alt.Scale(
-                    domain=["Average Transaction Value (Rp)"],
-                    range=[CAMPAIGN_CHART_BLUE],
-                ),
-                legend=alt.Legend(
-                    orient="top",
-                    direction="horizontal",
-                    offset=24,
-                    symbolType="square",
-                    symbolSize=150,
-                    symbolFillColor="#ffffff",
-                    symbolStrokeColor=CAMPAIGN_CHART_BLUE,
-                    symbolStrokeWidth=2,
-                ),
-            ),
-        )
-    )
-
     return (
-        alt.layer(bars, average_line, line_legend)
+        alt.layer(bars, redemption_line)
         .resolve_scale(y="independent")
         .properties(height=340)
         .configure(background="#ffffff")
@@ -2075,11 +2004,6 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
             labelFontSize=11,
             title=None,
             gridColor="#edf0f5",
-        )
-        .configure_legend(
-            labelColor="#555b68",
-            labelFontSize=11,
-            padding=0,
         )
     )
 
@@ -2164,7 +2088,10 @@ def build_conversion_funnel_chart(data: pd.DataFrame) -> alt.Chart:
 def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
     """Create the compact Product Performance redemption-channel donut."""
     chart_data = data.copy()
-    chart_data["percentage"] = chart_data["redemptions"] / chart_data["redemptions"].sum()
+    channel_total = float(chart_data["redemptions"].sum())
+    chart_data["percentage"] = (
+        chart_data["redemptions"] / channel_total if channel_total else 0.0
+    )
     chart_data["sort_order"] = range(len(chart_data))
     channel_order = chart_data["channel"].tolist()
     channel_colors = [
@@ -2191,7 +2118,7 @@ def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
         )
     )
     center_label = (
-        alt.Chart(pd.DataFrame({"label": ["100%"]}))
+        alt.Chart(pd.DataFrame({"label": ["100%" if channel_total else "0%"]}))
         .mark_text(color="#242b39", fontSize=16, fontWeight=700)
         .encode(text="label:N")
     )
@@ -2221,7 +2148,12 @@ def build_category_performance_chart(data: pd.DataFrame) -> alt.Chart:
     )
 
     totals = data.assign(total=data["redeemed"] + data["sampling"])
-    chart_maximum = float(totals["total"].max()) * 1.16
+    raw_maximum = totals["total"].max()
+    chart_maximum = (
+        max(float(raw_maximum) * 1.16, 1.0)
+        if pd.notna(raw_maximum)
+        else 1.0
+    )
 
     bars = (
         alt.Chart(chart_data)
@@ -2300,6 +2232,11 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
     # Hour 24 is the endpoint from the previous line-chart design. The bar
     # layout displays the 24 complete hourly buckets from 00:00 through 23:00.
     chart_data = data.loc[data["hour"] < 24].copy()
+    raw_maximum = chart_data["redemptions"].max()
+    maximum_redemptions = (
+        float(raw_maximum) if pd.notna(raw_maximum) else 0.0
+    )
+    y_axis_maximum = max(maximum_redemptions * 1.1, maximum_redemptions + 1, 2)
     selected_hour = alt.selection_point(
         name="selected_hour",
         fields=["hour"],
@@ -2323,10 +2260,11 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
         y=alt.Y(
             "redemptions:Q",
             title=None,
-            scale=alt.Scale(domain=[0, 4_000]),
+            scale=alt.Scale(domain=[0, y_axis_maximum], nice=False),
             axis=alt.Axis(
-                values=[0, 1_000, 2_000, 3_000, 4_000],
-                labelExpr="datum.value === 0 ? '0' : format(datum.value / 1000, '.0f') + 'k'",
+                format="~s",
+                tickCount=5,
+                tickMinStep=1,
                 tickSize=0,
                 grid=True,
             ),
@@ -2382,8 +2320,11 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
 def build_customer_mix_chart(data: pd.DataFrame) -> alt.Chart:
     """Create the Consumer Type donut chart."""
     chart_data = data.copy()
+    customer_total = float(chart_data["customers"].sum())
     chart_data["percentage"] = (
-        chart_data["customers"] / chart_data["customers"].sum() * 100
+        chart_data["customers"] / customer_total * 100
+        if customer_total
+        else 0.0
     )
     segment_order = chart_data["segment"].tolist()
 
@@ -2625,7 +2566,12 @@ with overview_column:
             '<div class="analytics-title native-chart-title product-card-title">'
             "Category Performance Overview</div>"
         )
-        maximum_vouchers = float(category_overview["vouchers_redeemed"].max())
+        raw_maximum_vouchers = category_overview["vouchers_redeemed"].max()
+        maximum_vouchers = (
+            max(float(raw_maximum_vouchers), 1.0)
+            if pd.notna(raw_maximum_vouchers)
+            else 1.0
+        )
         overview_rows = "".join(
             f"""
             <div class="category-compact-row">
@@ -2674,6 +2620,7 @@ with channel_column:
             "Redemption by Channel</div>"
         )
         channel_total = float(channel_data["redemptions"].sum())
+        channel_denominator = channel_total or 1.0
         channel_legend_rows = "".join(
             f"""
             <div class="product-channel-row">
@@ -2684,7 +2631,7 @@ with channel_column:
                 <span>{escape(str(row.channel))}</span>
                 <span class="product-channel-value">
                     {row.redemptions:,}
-                    ({row.redemptions / channel_total * 100:.0f}%)
+                    ({row.redemptions / channel_denominator * 100:.0f}%)
                 </span>
             </div>
             """
@@ -2814,6 +2761,7 @@ with customer_mix_column:
             st.altair_chart(customer_mix_chart, width="stretch")
         with customer_legend_column:
             segment_total = float(customer_segments["customers"].sum())
+            segment_denominator = segment_total or 1.0
             customer_palette = [CAMPAIGN_CHART_BLUE, CAMPAIGN_CHART_LIGHT_BLUE]
             customer_colors = {
                 segment: customer_palette[index % len(customer_palette)]
@@ -2832,7 +2780,7 @@ with customer_mix_column:
                         </div>
                         <div class="customer-legend-detail">
                             {row.customers:,}
-                            ({row.customers / segment_total * 100:.1f}%)
+                            ({row.customers / segment_denominator * 100:.1f}%)
                         </div>
                     </div>
                 </div>
@@ -2850,15 +2798,23 @@ with loyalty_column:
             'customer-card-title">'
             "Customer Loyalty</div>"
         )
+        if "repeat_customer_count" in loyalty:
+            loyalty_primary_value = f'{int(loyalty["repeat_customer_count"]):,}'
+            loyalty_primary_label = "Repeat Customers"
+            loyalty_secondary_label = "Share of Repeat Customers"
+        else:
+            loyalty_primary_value = f'{float(loyalty["average_transactions"]):.1f}'
+            loyalty_primary_label = "Avg. Transactions / Customer"
+            loyalty_secondary_label = "Customers redeemed more than 2x this month"
         st.html(
             f"""
             <div class="loyalty-metrics">
                 <div class="loyalty-metric">
                     <div class="customer-insight-value">
-                        {float(loyalty["average_transactions"]):.1f}
+                        {loyalty_primary_value}
                     </div>
                     <div class="customer-insight-description">
-                        Avg. Transactions / Customer
+                        {loyalty_primary_label}
                     </div>
                 </div>
                 <div class="loyalty-metric">
@@ -2866,7 +2822,7 @@ with loyalty_column:
                         {float(loyalty["repeat_customer_percentage"]):.0f}%
                     </div>
                     <div class="customer-insight-description">
-                        Customers redeemed more than 2x this month
+                        {loyalty_secondary_label}
                     </div>
                 </div>
             </div>
@@ -2923,28 +2879,95 @@ with age_column:
             'customer-card-title">'
             "Age Group</div>"
         )
-        maximum_age_percentage = float(age_groups["percentage"].max())
+        age_group_definitions = [
+            ("Generation Z", "18 – 29", {"generation z", "gen z", "18-29"}),
+            ("Millennials", "30 – 45", {"millennials", "millennial", "30-45"}),
+            ("Generation X", "46 – 61", {"generation x", "gen x", "46-61"}),
+            ("Baby Boomers", "62+", {"baby boomers", "boomer", "62+"}),
+        ]
+
+        def normalize_age_group_label(value: object) -> str:
+            return (
+                str(value)
+                .strip()
+                .lower()
+                .replace(" years", "")
+                .replace("–", "-")
+                .replace("—", "-")
+                .replace(" ", "")
+            )
+
+        age_percentage_lookup: dict[str, float] = {}
+        for row in age_groups.itertuples(index=False):
+            percentage = float(row.percentage)
+            for source_label in (row.age_group, row.age_range):
+                normalized_label = normalize_age_group_label(source_label)
+                if normalized_label:
+                    age_percentage_lookup[normalized_label] = percentage
+
+        age_group_display_rows: list[dict[str, object]] = []
+        for group_name, age_range, aliases in age_group_definitions:
+            normalized_aliases = {
+                normalize_age_group_label(alias) for alias in aliases
+            }
+            percentage = next(
+                (
+                    age_percentage_lookup[alias]
+                    for alias in normalized_aliases
+                    if alias in age_percentage_lookup
+                ),
+                None,
+            )
+            age_group_display_rows.append(
+                {
+                    "age_group": group_name,
+                    "age_range": age_range,
+                    "percentage": percentage,
+                }
+            )
+
+        available_age_percentages = [
+            float(row["percentage"])
+            for row in age_group_display_rows
+            if row["percentage"] is not None
+        ]
+        raw_maximum_age = max(available_age_percentages, default=0.0)
+        maximum_age_percentage = (
+            max(float(raw_maximum_age), 1.0)
+            if pd.notna(raw_maximum_age)
+            else 1.0
+        )
         age_group_rows = "".join(
             f"""
             <div class="age-group-row">
                 <div class="age-group-name">
-                    {escape(str(row.age_group))}
+                    {escape(str(row["age_group"]))}
                     <span class="age-group-range">
-                        ({escape(str(row.age_range).replace(' years', ''))})
+                        ({escape(str(row["age_range"]))})
                     </span>
                 </div>
                 <div class="age-group-track" aria-hidden="true">
                     <span
                         class="age-group-fill"
-                        style="width:{row.percentage / maximum_age_percentage * 100:.1f}%"
+                        style="width:{(
+                            float(row["percentage"]) / maximum_age_percentage * 100
+                            if row["percentage"] is not None
+                            else 0.0
+                        ):.1f}%"
                     ></span>
                 </div>
-                <div class="age-group-percentage">
-                    {row.percentage:.0f}%
+                <div class="age-group-percentage{(
+                    ' placeholder' if row["percentage"] is None else ''
+                )}">
+                    {(
+                        f'{float(row["percentage"]):.0f}%'
+                        if row["percentage"] is not None
+                        else '—'
+                    )}
                 </div>
             </div>
             """
-            for row in age_groups.itertuples(index=False)
+            for row in age_group_display_rows
         )
         st.html(
             f'<div class="age-group-list" aria-label="Age group redemption">'
