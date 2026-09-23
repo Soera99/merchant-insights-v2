@@ -110,14 +110,14 @@ export DASHBOARD_USER_ID='019f0000-0000-7000-8000-000000000001'
 streamlit run app.py
 ```
 
-The dashboard sends `POST /api/v1/partners/dashboard/filter-options` with the
+The dashboard sends `POST /api/v1/cep/dashboard/filter-options` with the
 user ID as the first item in `values`, then maps
 `content.vars.filter_options` (or an unwrapped `vars.filter_options`) to the
 Province and City selectors. An optional bearer token can be supplied through
 `DASHBOARD_API_BEARER_TOKEN`; request timeout can be adjusted with
 `DASHBOARD_API_TIMEOUT_SECONDS` (default: 10 seconds).
 
-KPI cards use `POST /api/v1/partners/dashboard/kpis`. The request values are
+KPI cards use `POST /api/v1/cep/dashboard/kpis`. The request values are
 sent in this exact order: user ID, province, city, ISO start date, and ISO
 end date. The dashboard maps `content.vars.query_out` (or an unwrapped
 `vars.query_out`) to the nine KPI cards.
@@ -125,9 +125,9 @@ end date. The dashboard maps `content.vars.query_out` (or an unwrapped
 Campaign Performance uses three more endpoints with the same ordered filter
 values:
 
-- `POST /api/v1/partners/dashboard/campaign-performance/kpis`
-- `POST /api/v1/partners/dashboard/campaign-performance/funnel`
-- `POST /api/v1/partners/dashboard/campaign-performance/redemption-trend`
+- `POST /api/v1/cep/dashboard/campaign-performance/kpis`
+- `POST /api/v1/cep/dashboard/campaign-performance/funnel`
+- `POST /api/v1/cep/dashboard/campaign-performance/redemption-trend`
 
 The dashboard converts the campaign KPI object into card rows, derives funnel
 percentages from the largest returned stage, and calculates each trend point's
@@ -135,25 +135,25 @@ average transaction value as redemption value divided by vouchers redeemed.
 
 Product Performance uses:
 
-- `POST /api/v1/partners/dashboard/product-performance/top-categories`
-- `POST /api/v1/partners/dashboard/product-performance/top-sampled-products`
-- `POST /api/v1/partners/dashboard/product-performance/top-products`
-- `POST /api/v1/partners/dashboard/product-performance/category-overview`
-- `POST /api/v1/partners/dashboard/product-performance/redemption-time`
-- `POST /api/v1/partners/dashboard/product-performance/redemption-channel`
+- `POST /api/v1/cep/dashboard/product-performance/top-categories`
+- `POST /api/v1/cep/dashboard/product-performance/top-sampled-products`
+- `POST /api/v1/cep/dashboard/product-performance/top-products`
+- `POST /api/v1/cep/dashboard/product-performance/category-overview`
+- `POST /api/v1/cep/dashboard/product-performance/redemption-time`
+- `POST /api/v1/cep/dashboard/product-performance/redemption-channel`
 
 Merchant Performance uses:
 
-- `POST /api/v1/partners/dashboard/merchant-performance/best-outlets`
-- `POST /api/v1/partners/dashboard/merchant-performance/best-campaigns`
-- `POST /api/v1/partners/dashboard/merchant-performance/top-locations`
+- `POST /api/v1/cep/dashboard/merchant-performance/best-outlets`
+- `POST /api/v1/cep/dashboard/merchant-performance/best-campaigns`
+- `POST /api/v1/cep/dashboard/merchant-performance/top-locations`
 
 Customer Insights uses:
 
-- `POST /api/v1/partners/dashboard/customer-insights/consumer-type`
-- `POST /api/v1/partners/dashboard/customer-insights/customer-loyalty`
-- `POST /api/v1/partners/dashboard/customer-insights/redemption-gender`
-- `POST /api/v1/partners/dashboard/customer-insights/age-group`
+- `POST /api/v1/cep/dashboard/customer-insights/consumer-type`
+- `POST /api/v1/cep/dashboard/customer-insights/customer-loyalty`
+- `POST /api/v1/cep/dashboard/customer-insights/redemption-gender`
+- `POST /api/v1/cep/dashboard/customer-insights/age-group`
 
 Every endpoint receives the same ordered filter values. Empty `query_out`
 lists are treated as valid no-data results, so the dashboard remains available

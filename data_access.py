@@ -426,53 +426,53 @@ class MockDashboardRepository:
 class ApiDashboardRepository(MockDashboardRepository):
     """Use the live backend APIs for every dashboard business-data section."""
 
-    FILTER_OPTIONS_PATH = "/api/v1/partners/dashboard/filter-options"
-    KPI_PATH = "/api/v1/partners/dashboard/kpis"
-    CAMPAIGN_KPI_PATH = "/api/v1/partners/dashboard/campaign-performance/kpis"
+    FILTER_OPTIONS_PATH = "/api/v1/cep/dashboard/filter-options"
+    KPI_PATH = "/api/v1/cep/dashboard/kpis"
+    CAMPAIGN_KPI_PATH = "/api/v1/cep/dashboard/campaign-performance/kpis"
     CAMPAIGN_FUNNEL_PATH = (
-        "/api/v1/partners/dashboard/campaign-performance/funnel"
+        "/api/v1/cep/dashboard/campaign-performance/funnel"
     )
     CAMPAIGN_TREND_PATH = (
-        "/api/v1/partners/dashboard/campaign-performance/redemption-trend"
+        "/api/v1/cep/dashboard/campaign-performance/redemption-trend"
     )
     PRODUCT_TOP_CATEGORIES_PATH = (
-        "/api/v1/partners/dashboard/product-performance/top-categories"
+        "/api/v1/cep/dashboard/product-performance/top-categories"
     )
     PRODUCT_TOP_SAMPLED_PATH = (
-        "/api/v1/partners/dashboard/product-performance/top-sampled-products"
+        "/api/v1/cep/dashboard/product-performance/top-sampled-products"
     )
     PRODUCT_TOP_PRODUCTS_PATH = (
-        "/api/v1/partners/dashboard/product-performance/top-products"
+        "/api/v1/cep/dashboard/product-performance/top-products"
     )
     PRODUCT_CATEGORY_OVERVIEW_PATH = (
-        "/api/v1/partners/dashboard/product-performance/category-overview"
+        "/api/v1/cep/dashboard/product-performance/category-overview"
     )
     PRODUCT_REDEMPTION_TIME_PATH = (
-        "/api/v1/partners/dashboard/product-performance/redemption-time"
+        "/api/v1/cep/dashboard/product-performance/redemption-time"
     )
     PRODUCT_REDEMPTION_CHANNEL_PATH = (
-        "/api/v1/partners/dashboard/product-performance/redemption-channel"
+        "/api/v1/cep/dashboard/product-performance/redemption-channel"
     )
     MERCHANT_BEST_OUTLETS_PATH = (
-        "/api/v1/partners/dashboard/merchant-performance/best-outlets"
+        "/api/v1/cep/dashboard/merchant-performance/best-outlets"
     )
     MERCHANT_BEST_CAMPAIGNS_PATH = (
-        "/api/v1/partners/dashboard/merchant-performance/best-campaigns"
+        "/api/v1/cep/dashboard/merchant-performance/best-campaigns"
     )
     MERCHANT_TOP_LOCATIONS_PATH = (
-        "/api/v1/partners/dashboard/merchant-performance/top-locations"
+        "/api/v1/cep/dashboard/merchant-performance/top-locations"
     )
     CUSTOMER_CONSUMER_TYPE_PATH = (
-        "/api/v1/partners/dashboard/customer-insights/consumer-type"
+        "/api/v1/cep/dashboard/customer-insights/consumer-type"
     )
     CUSTOMER_LOYALTY_PATH = (
-        "/api/v1/partners/dashboard/customer-insights/customer-loyalty"
+        "/api/v1/cep/dashboard/customer-insights/customer-loyalty"
     )
     CUSTOMER_GENDER_PATH = (
-        "/api/v1/partners/dashboard/customer-insights/redemption-gender"
+        "/api/v1/cep/dashboard/customer-insights/redemption-gender"
     )
     CUSTOMER_AGE_GROUP_PATH = (
-        "/api/v1/partners/dashboard/customer-insights/age-group"
+        "/api/v1/cep/dashboard/customer-insights/age-group"
     )
     CAMPAIGN_METRIC_KEYS = (
         "campaign_views",
