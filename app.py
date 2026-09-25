@@ -1445,10 +1445,10 @@ st.markdown(
 
         .category-compact-row {
             display: grid;
-            grid-template-columns: minmax(110px, 0.85fr) minmax(220px, 1.55fr);
+            grid-template-columns: minmax(82px, 0.85fr) minmax(0, 1.55fr);
             align-items: center;
             min-height: 3.15rem;
-            gap: 0.9rem;
+            gap: 0.6rem;
             border-bottom: 1px solid var(--border);
         }
 
@@ -1471,9 +1471,10 @@ st.markdown(
 
         .category-compact-metric {
             display: grid;
-            grid-template-columns: auto minmax(70px, 1fr);
+            grid-template-columns: auto minmax(40px, 1fr);
             align-items: center;
-            gap: 0.7rem;
+            min-width: 0;
+            gap: 0.5rem;
             color: #737b8b;
             font-size: 0.74rem;
             font-variant-numeric: tabular-nums;
@@ -1525,13 +1526,80 @@ st.markdown(
         }
 
         @media (max-width: 1320px) {
-            .kpi-row-four,
-            .kpi-row-five {
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-            }
-
             .campaign-metric-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        /* The partner site embeds this app at 1092px wide. Keep the overview
+           at four cards per row and compact the card internals enough to fit
+           without wrapping or horizontal overflow at that exact viewport. */
+        @media (min-width: 821px) and (max-width: 1180px) {
+            .kpi-grid,
+            .kpi-row {
+                gap: 0.75rem;
+            }
+
+            .kpi-row-four {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+
+            .kpi-card {
+                padding: 0.85rem 0.68rem;
+                border-radius: 20px;
+            }
+
+            .kpi-label {
+                font-size: 0.74rem;
+            }
+
+            .kpi-value-row {
+                gap: 0.42rem;
+            }
+
+            .kpi-value {
+                font-size: clamp(1.3rem, 2.25vw, 1.62rem);
+            }
+
+            .kpi-change {
+                gap: 0.2rem;
+                padding: 0.34rem 0.45rem;
+                font-size: 0.72rem;
+            }
+
+            .category-compact-row {
+                grid-template-columns: minmax(76px, 0.8fr) minmax(0, 1.6fr);
+                gap: 0.42rem;
+            }
+
+            .category-compact-name,
+            .category-compact-metric {
+                font-size: 0.68rem;
+            }
+
+            .category-compact-metric {
+                grid-template-columns: auto minmax(32px, 1fr);
+                gap: 0.35rem;
+            }
+
+            .product-channel-legend {
+                gap: 0.68rem;
+                min-height: 190px;
+            }
+
+            .product-channel-row {
+                grid-template-columns: 8px minmax(54px, 1fr) auto;
+                gap: 0.35rem;
+                font-size: 0.68rem;
+            }
+
+            .product-channel-dot {
+                width: 8px;
+                height: 8px;
+            }
+
+            .product-channel-value {
+                font-size: 0.66rem;
             }
         }
 
@@ -2090,7 +2158,7 @@ def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
 
     arcs = (
         alt.Chart(chart_data)
-        .mark_arc(innerRadius=48, outerRadius=76, stroke="white", strokeWidth=1)
+        .mark_arc(innerRadius=34, outerRadius=54, stroke="white", strokeWidth=1)
         .encode(
             theta=alt.Theta("redemptions:Q", stack=True),
             color=alt.Color(
@@ -2113,7 +2181,7 @@ def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
     )
     return (
         (arcs + center_label)
-        .properties(height=235)
+        .properties(height=190)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
     )
