@@ -1692,17 +1692,17 @@ st.markdown(
 # Dashboard header and global filters
 # Province controls the City choices, and all three filters reach every query.
 # -----------------------------------------------------------------------------
-st.html(
-    """
-    <div>
-        <div class="dashboard-title">Business Insight Dashboard</div>
-        <div class="dashboard-description">
-            Monitor campaign, voucher, product, and merchant performance
-            in real-time.
-        </div>
-    </div>
-    """
-)
+# st.html(
+#     """
+#     <div>
+#         <div class="dashboard-title">Business Insight Dashboard</div>
+#         <div class="dashboard-description">
+#             Monitor campaign, voucher, product, and merchant performance
+#             in real-time.
+#         </div>
+#     </div>
+#     """
+# )
 
 filter_options = load_filter_options()
 if not filter_options or any(not cities for cities in filter_options.values()):
