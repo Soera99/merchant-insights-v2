@@ -42,7 +42,9 @@ streamlit run app.py
 `app.py` contains presentation and chart code. `data_access.py` owns the data
 contract, demo repository, schema validation, and repository selection.
 
-The app uses `MockDashboardRepository` by default. To connect a backend:
+The app uses `MockDashboardRepository` by default. This keeps the public demo
+fully populated even if API credentials remain configured. To connect a
+backend:
 
 1. Create a Python module that implements every method in
    `DashboardRepository`.
@@ -101,16 +103,21 @@ The authoritative method signatures and schemas are in
 
 ### Dashboard API
 
-All dashboard sections use the backend dashboard API when API configuration is
-present. Configure:
+All dashboard sections can use the backend dashboard API. Opt into live API
+mode explicitly so demo deployments do not unexpectedly depend on backend
+availability:
 
 ```bash
+export DASHBOARD_DATA_MODE='api'
 export DASHBOARD_API_BASE_URL='https://your-api.example.com'
 export DASHBOARD_USER_ID='019f0000-0000-7000-8000-000000000001'
+export DASHBOARD_API_BEARER_TOKEN='a-current-CEP-access-token'
 streamlit run app.py
 ```
 
-The dashboard sends `POST /api/v1/cep/dashboard/filter-options` with the
+When `DASHBOARD_DATA_MODE` is unset or set to `mock`, the app uses its complete
+dummy dataset and ignores API credentials. The dashboard sends
+`POST /api/v1/cep/dashboard/filter-options` with the
 user ID as the first item in `values`, then maps
 `content.vars.filter_options` (or an unwrapped `vars.filter_options`) to the
 Province and City selectors. An optional bearer token can be supplied through
@@ -180,10 +187,10 @@ instead of raising a missing-column exception.
 The customer loyalty result is a dictionary containing
 `average_transactions` and `repeat_customer_percentage`.
 
-The KPI dataset must return these nine `metric_key` values in any order:
+The KPI dataset must return these eight `metric_key` values in any order:
 `active_campaigns`, `completed_campaigns`, `vouchers_claimed`,
 `vouchers_redeemed`, `total_consumers`, `new_consumers`,
-`stores_participated`, `redemption_rate`, and `redemption_value`.
+`redemption_rate`, and `redemption_value`.
 
 The Campaign Performance dataset must return `campaign_views`,
 `campaign_clicks`, `click_through_rate`, `claim_rate`,
@@ -221,10 +228,22 @@ Configure these values in the hosting platform's secret/environment settings,
 not in the repository:
 
 ```toml
+DASHBOARD_DATA_MODE = "mock"
 DASHBOARD_API_BASE_URL = "https://anexa-api-service-735112988988.asia-southeast2.run.app"
 DASHBOARD_USER_ID = "019f0000-0000-7000-8000-000000000001"
+DASHBOARD_API_BEARER_TOKEN = "a-current-CEP-access-token"
 DASHBOARD_API_TIMEOUT_SECONDS = "30"
 ```
+
+For the Tuesday demo, keep `DASHBOARD_DATA_MODE = "mock"`. After the demo,
+change it to `"api"` to reconnect the existing `/api/v1/cep/dashboard/...`
+adapter without changing dashboard presentation code.
+
+The CEP dashboard routes require a current Bearer access token. A missing or
+expired `DASHBOARD_API_BEARER_TOKEN` returns HTTP 401 before the dashboard SQL
+workflow runs. Static short-lived user tokens are suitable only for temporary
+testing; production should use the authentication flow agreed with the backend
+team so tokens can be refreshed or forwarded securely.
 
 After deployment, give the frontend team the public HTTPS dashboard URL. They
 can embed it with an iframe similar to:

@@ -120,7 +120,6 @@ class MockDashboardRepository:
                     "vouchers_redeemed",
                     "total_consumers",
                     "new_consumers",
-                    "stores_participated",
                     "redemption_rate",
                     "redemption_value",
                 ],
@@ -131,12 +130,11 @@ class MockDashboardRepository:
                     39_140,
                     152_400,
                     28_770,
-                    120,
                     46.4,
                     156_800_000,
                 ],
-                "change_pct": [15.5, 8.2, 12.4, 15.5, 9.8, 18.1, 6.4, -2.3, 15.5],
-                "comparison_label": ["vs. Apr 2026"] * 9,
+                "change_pct": [15.5, 8.2, 12.4, 15.5, 9.8, 18.1, -2.3, 15.5],
+                "comparison_label": ["vs. Apr 2026"] * 8,
             }
         )
 
@@ -514,8 +512,25 @@ class ApiDashboardRepository(MockDashboardRepository):
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 payload = json.load(response)
         except HTTPError as exc:
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace").strip()
+            except Exception:
+                error_body = ""
+            if exc.code == 401:
+                token_status = (
+                    "DASHBOARD_API_BEARER_TOKEN was supplied but was rejected "
+                    "or has expired"
+                    if self.bearer_token
+                    else "DASHBOARD_API_BEARER_TOKEN is not configured"
+                )
+                details = f" Backend response: {error_body}" if error_body else ""
+                raise RuntimeError(
+                    f"Dashboard API returned HTTP 401 for {path}: "
+                    f"{token_status}.{details}"
+                ) from exc
             raise RuntimeError(
                 f"Dashboard API returned HTTP {exc.code} for {path}"
+                + (f": {error_body}" if error_body else "")
             ) from exc
         except URLError as exc:
             raise RuntimeError(
@@ -1198,18 +1213,25 @@ def validate_frame(frame: pd.DataFrame, schema_name: str) -> pd.DataFrame:
 # An environment variable swaps mock data for the internal backend adapter.
 # -----------------------------------------------------------------------------
 def create_dashboard_repository() -> DashboardRepository:
-    """Create the configured repository, defaulting to local demo data."""
+    """Create the selected repository, defaulting to complete demo data."""
     factory_path = os.getenv("DASHBOARD_REPOSITORY_FACTORY", "").strip()
-    if not factory_path:
+    data_mode = os.getenv("DASHBOARD_DATA_MODE", "mock").strip().lower()
+
+    # Tuesday's public demo deliberately uses the complete mock dataset even
+    # when API credentials remain configured in Streamlit Secrets. Switching
+    # back to the live adapter later only requires DASHBOARD_DATA_MODE="api".
+    if not factory_path and data_mode == "mock":
+        return MockDashboardRepository()
+
+    if not factory_path and data_mode == "api":
         base_url = os.getenv("DASHBOARD_API_BASE_URL", "").strip()
         user_id = os.getenv("DASHBOARD_USER_ID", "").strip()
         legacy_partner_id = os.getenv("DASHBOARD_PARTNER_ID", "").strip()
         dashboard_user_id = user_id or legacy_partner_id
-        if not base_url and not dashboard_user_id:
-            return MockDashboardRepository()
         if not base_url or not dashboard_user_id:
             raise ValueError(
-                "DASHBOARD_API_BASE_URL and DASHBOARD_USER_ID must be set together"
+                "DASHBOARD_DATA_MODE=api requires DASHBOARD_API_BASE_URL "
+                "and DASHBOARD_USER_ID"
             )
         try:
             timeout_seconds = float(
@@ -1224,6 +1246,11 @@ def create_dashboard_repository() -> DashboardRepository:
             user_id=dashboard_user_id,
             timeout_seconds=timeout_seconds,
             bearer_token=os.getenv("DASHBOARD_API_BEARER_TOKEN", "").strip(),
+        )
+
+    if not factory_path:
+        raise ValueError(
+            "DASHBOARD_DATA_MODE must be either 'mock' or 'api'"
         )
 
     try:

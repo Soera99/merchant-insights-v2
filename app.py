@@ -174,10 +174,6 @@ METRIC_PRESENTATION = {
         "label": "New Consumers",
         "format": lambda value: f"{value:,.0f}",
     },
-    "stores_participated": {
-        "label": "Total Stores Participated",
-        "format": lambda value: f"{value:,.0f}",
-    },
     "redemption_rate": {
         "label": "Redemption Rate",
         "format": lambda value: f"{value:.1f}%",
@@ -537,8 +533,7 @@ st.markdown(
 
         .kpi-card {
             box-sizing: border-box;
-            min-height: 166px;
-            padding: 1.4rem 1.5rem;
+            padding: 0.9rem 0.8rem;
             background: #f7f8fa;
             border: 1px solid #f2f3f6;
             border-radius: 24px;
@@ -561,7 +556,7 @@ st.markdown(
             color: #374151;
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             font-weight: 650;
             line-height: 1.3;
             margin: 0;
@@ -572,7 +567,7 @@ st.markdown(
             display: flex;
             align-items: center;
             gap: 0.8rem;
-            margin-top: 0.9rem;
+            margin-top: 8px;
         }
 
         .kpi-value {
@@ -613,10 +608,10 @@ st.markdown(
             color: #a1a6b2;
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
-            font-size: 0.8rem;
+            font-size: 0.7rem;
             font-weight: 400;
             line-height: 1.25;
-            margin: 1rem 0 0;
+            margin: 0.5rem 0 0;
         }
 
         .campaign-performance-heading {
@@ -638,14 +633,12 @@ st.markdown(
 
         .campaign-metric-grid .kpi-card,
         .campaign-summary-grid .kpi-card {
-            min-height: 138px;
-            padding: 1.1rem 1.2rem;
             border-radius: 20px;
         }
 
         .campaign-metric-grid .kpi-label,
         .campaign-summary-grid .kpi-label {
-            font-size: 0.82rem;
+            font-size: 0.8rem;
         }
 
         .campaign-metric-grid .kpi-value,
@@ -660,8 +653,8 @@ st.markdown(
 
         .campaign-metric-grid .kpi-comparison,
         .campaign-summary-grid .kpi-comparison {
-            margin-top: 0.78rem;
-            font-size: 0.75rem;
+            margin: 0.5rem 0 0;
+            font-size: 0.7rem;
         }
 
         .campaign-summary-grid {
@@ -1602,10 +1595,6 @@ st.markdown(
                 grid-template-columns: 1fr;
             }
 
-            .kpi-card {
-                min-height: 150px;
-            }
-
             .trend-card,
             .channel-card {
                 padding: 1.2rem 1rem;
@@ -1721,7 +1710,7 @@ st.markdown(
             <div class="kpi-row kpi-row-four">
                 {''.join(cards[:4])}
             </div>
-            <div class="kpi-row kpi-row-five">
+            <div class="kpi-row kpi-row-four">
                 {''.join(cards[4:])}
             </div>
         </div>
