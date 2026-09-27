@@ -575,7 +575,7 @@ st.markdown(
             font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
                 "Segoe UI", sans-serif;
             font-size: clamp(1.7rem, 2vw, 2.2rem);
-            font-weight: 760;
+            font-weight: 600;
             letter-spacing: -0.035em;
             line-height: 1.1;
             margin: 0;
@@ -667,6 +667,48 @@ st.markdown(
 
         .campaign-chart-title {
             margin-bottom: 0.45rem;
+        }
+
+        .campaign-trend-legend {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.55rem 1rem;
+            min-height: 1.4rem;
+            margin: 0.1rem 0 0.25rem;
+            color: #626875;
+            font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+            font-size: 0.68rem;
+        }
+
+        .campaign-trend-legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.38rem;
+            white-space: nowrap;
+        }
+
+        .campaign-trend-legend-mark {
+            box-sizing: border-box;
+            width: 9px;
+            height: 9px;
+            flex: 0 0 9px;
+            border-radius: 1px;
+        }
+
+        .campaign-trend-legend-mark.vouchers {
+            background: #506ac5;
+        }
+
+        .campaign-trend-legend-mark.redemption-value {
+            background: #edf1fa;
+            border: 1px solid #dce3f4;
+        }
+
+        .campaign-trend-legend-mark.average-transaction {
+            background: transparent;
+            border: 1.5px solid #7487d0;
         }
 
         .analytics-section {
@@ -1544,6 +1586,20 @@ st.markdown(
                 grid-template-columns: repeat(4, minmax(0, 1fr));
             }
 
+            .campaign-metric-grid {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 0.75rem;
+            }
+
+            .campaign-metric-grid .kpi-label {
+                font-size: 0.7rem;
+            }
+
+            .campaign-trend-legend {
+                gap: 0.4rem 0.65rem;
+                font-size: 0.61rem;
+            }
+
             .kpi-card {
                 padding: 0.85rem 0.68rem;
                 border-radius: 20px;
@@ -1600,6 +1656,63 @@ st.markdown(
 
             .product-channel-value {
                 font-size: 0.66rem;
+            }
+
+            /* Customer Insight cards stay in one row inside the 1092px
+               partner iframe. Compact their internal layouts so donut marks
+               and right-aligned percentages remain inside each card. */
+            .customer-mix-legend,
+            .gender-donut-legend {
+                gap: 0.62rem;
+                min-height: 132px;
+                padding-top: 0.2rem;
+            }
+
+            .customer-legend-item {
+                grid-template-columns: 7px minmax(0, 1fr);
+                gap: 0.38rem;
+            }
+
+            .customer-legend-dot {
+                width: 7px;
+                height: 7px;
+            }
+
+            .customer-legend-name,
+            .customer-legend-detail {
+                font-size: 0.66rem;
+            }
+
+            .customer-legend-detail {
+                margin-top: 0.24rem;
+            }
+
+            .age-group-list {
+                margin-top: 0.28rem;
+            }
+
+            .age-group-row {
+                grid-template-columns: minmax(62px, 1fr) minmax(28px, 0.62fr) 1.7rem;
+                min-height: 2.35rem;
+                gap: 0.3rem;
+            }
+
+            .age-group-name {
+                font-size: 0.63rem;
+            }
+
+            .age-group-range {
+                font-size: 0.56rem;
+            }
+
+            .age-group-track {
+                height: 7px;
+            }
+
+            .age-group-percentage {
+                width: 1.7rem;
+                font-size: 0.62rem;
+                text-align: right;
             }
         }
 
@@ -1975,11 +2088,80 @@ if False:  # Legacy static prototype kept temporarily for design reference.
 def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
     """Create the live voucher-redemption and redemption-value trend chart."""
     period_order = data["period"].tolist()
-    bars = (
+    # Explicit domains and tick values prevent Vega from displaying scientific
+    # notation such as "4e+3" on compact embedded dashboards.
+    voucher_step = 2_000
+    voucher_maximum = max(float(data["vouchers_redeemed"].max()), voucher_step)
+    voucher_axis_maximum = max(
+        voucher_step,
+        int((voucher_maximum + voucher_step - 1) // voucher_step) * voucher_step,
+    )
+    voucher_ticks = list(range(0, voucher_axis_maximum + 1, voucher_step))
+
+    redemption_step = 10_000_000
+    redemption_maximum = max(float(data["redemption_value"].max()), redemption_step)
+    redemption_axis_maximum = max(
+        redemption_step,
+        int(
+            (redemption_maximum + redemption_step - 1) // redemption_step
+        )
+        * redemption_step,
+    )
+    redemption_ticks = list(
+        range(0, redemption_axis_maximum + 1, redemption_step)
+    )
+
+    average_maximum = max(
+        float(data["average_transaction_value"].max()) * 1.18,
+        1.0,
+    )
+
+    redemption_bars = (
+        alt.Chart(data)
+        .mark_bar(
+            color=CAMPAIGN_CHART_LIGHT_BLUE,
+            size=46,
+            cornerRadiusTopLeft=3,
+            cornerRadiusTopRight=3,
+        )
+        .encode(
+            x=alt.X(
+                "period:N",
+                sort=period_order,
+                title=None,
+                axis=alt.Axis(labelAngle=0, labelPadding=10, tickSize=0),
+            ),
+            y=alt.Y(
+                "redemption_value:Q",
+                title="Redemption Value (Rp)",
+                axis=alt.Axis(
+                    orient="right",
+                    values=redemption_ticks,
+                    labelExpr=(
+                        "datum.value === 0 ? '0' : "
+                        "format(datum.value / 1000000, '.0f') + 'M'"
+                    ),
+                    grid=False,
+                    tickSize=0,
+                ),
+                scale=alt.Scale(domain=[0, redemption_axis_maximum], nice=False),
+            ),
+            tooltip=[
+                alt.Tooltip("period:N", title="Period"),
+                alt.Tooltip(
+                    "redemption_value:Q",
+                    title="Redemption Value (Rp)",
+                    format=",.0f",
+                ),
+            ],
+        )
+    )
+
+    voucher_bars = (
         alt.Chart(data)
         .mark_bar(
             color=CAMPAIGN_CHART_BLUE,
-            size=46,
+            size=27,
             cornerRadiusTopLeft=3,
             cornerRadiusTopRight=3,
         )
@@ -1993,8 +2175,16 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
             y=alt.Y(
                 "vouchers_redeemed:Q",
                 title="Vouchers",
-                axis=alt.Axis(format=",", grid=True, tickCount=5),
-                scale=alt.Scale(zero=True),
+                axis=alt.Axis(
+                    values=voucher_ticks,
+                    labelExpr=(
+                        "datum.value === 0 ? '0' : "
+                        "format(datum.value / 1000, '.0f') + 'k'"
+                    ),
+                    grid=True,
+                    tickSize=0,
+                ),
+                scale=alt.Scale(domain=[0, voucher_axis_maximum], nice=False),
             ),
             tooltip=[
                 alt.Tooltip("period:N", title="Period"),
@@ -2007,7 +2197,7 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
         )
     )
 
-    redemption_line = (
+    average_line = (
         alt.Chart(data)
         .mark_line(
             color=CAMPAIGN_CHART_TONES[1],
@@ -2023,23 +2213,13 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
         .encode(
             x=alt.X("period:N", sort=period_order, title=None),
             y=alt.Y(
-                "redemption_value:Q",
-                title="Redemption Value (Rp)",
-                axis=alt.Axis(
-                    orient="right",
-                    format="~s",
-                    grid=False,
-                    tickCount=5,
-                ),
-                scale=alt.Scale(zero=True),
+                "average_transaction_value:Q",
+                title=None,
+                axis=None,
+                scale=alt.Scale(domain=[0, average_maximum], nice=False),
             ),
             tooltip=[
                 alt.Tooltip("period:N", title="Period"),
-                alt.Tooltip(
-                    "redemption_value:Q",
-                    title="Redemption Value (Rp)",
-                    format=",.0f",
-                ),
                 alt.Tooltip(
                     "average_transaction_value:Q",
                     title="Average Transaction (Rp)",
@@ -2050,9 +2230,9 @@ def build_trend_chart(data: pd.DataFrame) -> alt.Chart:
     )
 
     return (
-        alt.layer(bars, redemption_line)
+        alt.layer(redemption_bars, voucher_bars, average_line)
         .resolve_scale(y="independent")
-        .properties(height=340)
+        .properties(height=312)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
         .configure_axis(
@@ -2121,8 +2301,9 @@ def build_conversion_funnel_chart(data: pd.DataFrame) -> alt.Chart:
         alt.Chart(chart_data)
         .mark_text(
             align="right",
-            baseline="middle",
-            dx=-8,
+            baseline="bottom",
+            dx=0,
+            dy=-23,
             color="#343a48",
             fontWeight=600,
         )
@@ -2389,8 +2570,8 @@ def build_customer_mix_chart(data: pd.DataFrame) -> alt.Chart:
         alt.Chart(chart_data)
         .mark_arc(
             # Adjust these radii later if the donut itself needs resizing.
-            innerRadius=30,
-            outerRadius=55,
+            innerRadius=23,
+            outerRadius=40,
             stroke="#ffffff",
             strokeWidth=1,
         )
@@ -2412,7 +2593,7 @@ def build_customer_mix_chart(data: pd.DataFrame) -> alt.Chart:
             ],
         )
         # Lower this height to move the donut upward; raise it to move it down.
-        .properties(height=150)
+        .properties(height=132)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
     )
@@ -2426,8 +2607,8 @@ def build_gender_chart(data: pd.DataFrame) -> alt.Chart:
     return (
         alt.Chart(chart_data)
         .mark_arc(
-            innerRadius=30,
-            outerRadius=55,
+            innerRadius=23,
+            outerRadius=40,
             stroke="#ffffff",
             strokeWidth=1,
         )
@@ -2447,7 +2628,7 @@ def build_gender_chart(data: pd.DataFrame) -> alt.Chart:
                 alt.Tooltip("percentage:Q", title="Redemptions", format=".1f"),
             ],
         )
-        .properties(height=145)
+        .properties(height=132)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
     )
@@ -2522,6 +2703,24 @@ with campaign_trend_column:
         st.html(
             '<div class="analytics-title native-chart-title campaign-chart-title">'
             "Redemption &amp; Sales Trend</div>"
+        )
+        st.html(
+            """
+            <div class="campaign-trend-legend" aria-label="Chart legend">
+                <span class="campaign-trend-legend-item">
+                    <span class="campaign-trend-legend-mark vouchers"></span>
+                    Voucher Redeemed
+                </span>
+                <span class="campaign-trend-legend-item">
+                    <span class="campaign-trend-legend-mark redemption-value"></span>
+                    Redemption Value (Rp)
+                </span>
+                <span class="campaign-trend-legend-item">
+                    <span class="campaign-trend-legend-mark average-transaction"></span>
+                    Average Transaction Value (Rp)
+                </span>
+            </div>
+            """
         )
         st.altair_chart(trend_chart, width="stretch")
 
@@ -2810,7 +3009,7 @@ with customer_mix_column:
         )
         st.html('<div class="customer-content-offset" aria-hidden="true"></div>')
         donut_column, customer_legend_column = st.columns(
-            [0.78, 1.22],
+            [0.92, 1.08],
             gap="small",
             vertical_alignment="top",
         )
@@ -2919,7 +3118,7 @@ with gender_column:
             for row in gender.itertuples(index=False)
         )
         gender_donut_column, gender_legend_column = st.columns(
-            [0.82, 1.18],
+            [1, 1],
             gap="small",
             vertical_alignment="top",
         )
