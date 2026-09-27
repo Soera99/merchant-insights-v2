@@ -2339,7 +2339,9 @@ def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
 
     arcs = (
         alt.Chart(chart_data)
-        .mark_arc(innerRadius=34, outerRadius=54, stroke="white", strokeWidth=1)
+        # Keep the donut diameter below the narrow chart column width used by
+        # the 1092px iframe. Increase both radii together if the card widens.
+        .mark_arc(innerRadius=29, outerRadius=47, stroke="white", strokeWidth=1)
         .encode(
             theta=alt.Theta("redemptions:Q", stack=True),
             color=alt.Color(
@@ -2362,7 +2364,7 @@ def build_channel_chart(data: pd.DataFrame) -> alt.Chart:
     )
     return (
         (arcs + center_label)
-        .properties(height=190)
+        .properties(height=176)
         .configure(background="#ffffff")
         .configure_view(stroke=None, fill="#ffffff")
     )
@@ -2511,9 +2513,11 @@ def build_time_of_day_chart(data: pd.DataFrame) -> alt.Chart:
 
     bars = (
         base.mark_bar(
-            size=13,
-            cornerRadiusTopLeft=5,
-            cornerRadiusTopRight=5,
+            # This fixed width leaves a visible gap between all 24 hourly bars
+            # even when the chart is rendered in the 1092px partner iframe.
+            size=7,
+            cornerRadiusTopLeft=3,
+            cornerRadiusTopRight=3,
         )
         .encode(
             color=alt.condition(
