@@ -9,8 +9,8 @@ env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
   REGION: asia-southeast2
   REPOSITORY: anexa-be-repo              # reuse existing Artifact Registry repo (confirm with mentor)
-  IMAGE_NAME: merchant-insights-image
-  SERVICE: merchant-insights-service
+  IMAGE_NAME: free-merchant-dashboard-image
+  SERVICE: free-merchant-dashboard
 
 jobs:
   deploy:
