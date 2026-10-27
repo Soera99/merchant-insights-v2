@@ -1,0 +1,66 @@
+name: Deploy Dashboard to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  REGION: asia-southeast2
+  REPOSITORY: anexa-be-repo              # reuse existing Artifact Registry repo (confirm with mentor)
+  IMAGE_NAME: merchant-insights-image
+  SERVICE: merchant-insights-service
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WI_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
+
+      - name: Build and push image
+        run: |
+          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker build -t $IMAGE .
+          docker push $IMAGE
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          # min-instances=1   -> always one warm instance, no sleep / cold start
+          # session-affinity  -> Streamlit keeps session state in memory, keep user on same instance
+          # timeout=3600      -> Streamlit uses a long-lived websocket
+          flags: >-
+            --port=8080
+            --min-instances=1
+            --max-instances=3
+            --session-affinity
+            --timeout=3600
+            --memory=1Gi
+            --cpu=1
+          env_vars: |
+            DASHBOARD_DATA_MODE=${{ vars.DASHBOARD_DATA_MODE }}
+            DASHBOARD_API_BASE_URL=${{ vars.DASHBOARD_API_BASE_URL }}
+            DASHBOARD_USER_ID=${{ vars.DASHBOARD_USER_ID }}
+            DASHBOARD_API_TIMEOUT_SECONDS=30
+            DASHBOARD_API_BEARER_TOKEN=${{ secrets.DASHBOARD_API_BEARER_TOKEN }}
