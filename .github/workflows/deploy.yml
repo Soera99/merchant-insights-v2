@@ -1,66 +1,80 @@
-name: Deploy Dashboard to Cloud Run
+name: Deploy unified merchant dashboard
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-unified-merchant-dashboard
+  cancel-in-progress: false
+
 env:
   GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_WI_PROVIDER: ${{ vars.GCP_WI_PROVIDER }}
+  GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
   REGION: asia-southeast2
-  REPOSITORY: anexa-be-repo              # reuse existing Artifact Registry repo (confirm with mentor)
+  REPOSITORY: anexa-be-repo
   IMAGE_NAME: free-merchant-dashboard-image
   SERVICE: free-merchant-dashboard
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          workload_identity_provider: ${{ vars.GCP_WI_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up gcloud CLI
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev
-
-      - name: Build and push image
+          python-version: '3.12'
+          cache: pip
+      - name: Validate and test both dashboards
+        shell: bash
+        env:
+          DASHBOARD_DATA_MODE: mock
+          DASHBOARD_REPOSITORY_FACTORY: ''
         run: |
-          IMAGE=${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker build -t $IMAGE .
-          docker push $IMAGE
-
-      - name: Deploy to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v2
+          set -euo pipefail
+          for name in GCP_PROJECT_ID GCP_WI_PROVIDER GCP_SERVICE_ACCOUNT; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing repository Actions variable: $name"
+              exit 1
+            fi
+          done
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
         with:
-          service: ${{ env.SERVICE }}
-          region: ${{ env.REGION }}
-          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          # min-instances=1   -> always one warm instance, no sleep / cold start
-          # session-affinity  -> Streamlit keeps session state in memory, keep user on same instance
-          # timeout=3600      -> Streamlit uses a long-lived websocket
-          flags: >-
-            --port=8080
-            --min-instances=1
-            --max-instances=3
-            --session-affinity
-            --timeout=3600
-            --memory=1Gi
-            --cpu=1
-          env_vars: |
-            DASHBOARD_DATA_MODE=${{ vars.DASHBOARD_DATA_MODE }}
-            DASHBOARD_API_BASE_URL=${{ vars.DASHBOARD_API_BASE_URL }}
-            DASHBOARD_USER_ID=${{ vars.DASHBOARD_USER_ID }}
-            DASHBOARD_API_TIMEOUT_SECONDS=30
-            DASHBOARD_API_BEARER_TOKEN=${{ secrets.DASHBOARD_API_BEARER_TOKEN }}
+          workload_identity_provider: ${{ env.GCP_WI_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Build and push image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build --platform linux/amd64 --tag "$IMAGE" .
+          docker push "$IMAGE"
+      - name: Deploy existing service and preserve runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail if the target service does not exist. This migration reuses it;
+          # its runtime service account, IAM, environment and secrets stay in GCP.
+          gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$REGION" --format='value(metadata.name)' > /dev/null
+          gcloud run deploy "$SERVICE"             --project "$GCP_PROJECT_ID"             --region "$REGION"             --image "$IMAGE"             --port 8080             --min 1             --max 3             --session-affinity             --timeout 3600             --memory 1Gi             --cpu 1             --quiet
+      - name: Show dashboard URLs
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "$SERVICE" --project "$GCP_PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          echo "Free: ${URL}/?dashboard=free&embed=true&embed_options=light_theme" >> "$GITHUB_STEP_SUMMARY"
+          echo "Advanced: ${URL}/?dashboard=advanced&embed=true&embed_options=light_theme" >> "$GITHUB_STEP_SUMMARY"
