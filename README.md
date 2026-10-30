@@ -1,268 +1,104 @@
-# Business Insight Dashboard
+# Merchant Dashboard — Free + Advanced
 
-A public-ready Streamlit dashboard for campaign, voucher, product, merchant,
-and customer performance. The repository ships with demo data and a replaceable
-repository interface so a backend team can connect SQL, a warehouse, or an API
-without changing the dashboard UI.
+Satu aplikasi Streamlit, satu repository, satu image Docker, dan satu service Cloud Run.
+Halaman default tetap Free sehingga URL iframe lama tetap membuka dashboard yang sama.
+Tidak ada menu tambahan pada iframe. Pilihan dashboard ditentukan oleh web partner.
 
-## Public demo and embedding
+## Struktur
 
-- Live dashboard: <https://soera99-merchant-insights-v2.streamlit.app/>
-- GitHub repository: <https://github.com/Soera99/merchant-insights-v2>
-- Embed URL: <https://soera99-merchant-insights-v2.streamlit.app/?embed=true>
+| Path | Tanggung jawab |
+| --- | --- |
+| `app.py` | Entry point Streamlit dan pemilihan halaman |
+| `shared/routing.py` | Validasi parameter `dashboard`; hanya `free` dan `advanced` |
+| `dashboards/free.py` | UI Free / Merchant Insights (Altair) |
+| `dashboards/advanced.py` | UI Advanced dan lima tab intelligence (Plotly) |
+| `services/free_data.py` | Repository mock/API free, kontrak data dan normalisasi |
+| `services/advanced_data.py` | Model KPI dan lima adapter data demo advanced |
+| `assets/free/` | Ikon PNG dashboard free |
+| `tests/` | Test API free, routing, render, rerun, dan interaksi |
+| `.streamlit/config.toml` | Tema light bersama dan konfigurasi server |
+| `Dockerfile` | Container Python 3.12, non-root, port 8080 |
+| `.github/workflows/deploy.yml` | Test, build image, dan deploy layanan yang sudah ada |
+| `docs/DEPLOY_ID.md` | Langkah migrasi GitHub Desktop dan Cloud Run |
+| `docs/FREE_API_REFERENCE.md` | Kontrak integrasi backend free dari README asal |
+| `docs/ADVANCED_REFERENCE.md` | Referensi README advanced asal |
+| `docs/MERGE_NOTES.md` | Ringkasan perubahan, batasan dan hasil validasi |
 
-Streamlit Community Cloud supports embedding public apps in an iframe. The web
-team can start with:
+UI kedua dashboard tetap berada di file masing-masing. Tidak dipaksakan menjadi satu
+renderer karena struktur datanya berbeda. Layer data dipisahkan dari UI supaya
+integrasi backend berikutnya tidak perlu mengubah routing.
 
-```html
-<iframe
-  src="https://soera99-merchant-insights-v2.streamlit.app/?embed=true&embed_options=light_theme"
-  title="Business Insight Dashboard"
-  loading="lazy"
-  style="width: 100%; height: 1200px; border: 0;"
-></iframe>
-```
+## Menjalankan lokal
 
-The host page controls the iframe height. Increase `height` if the dashboard
-should display more sections before scrolling.
-
-## Run locally
-
-Requires Python 3.10 or newer.
+Jalankan perintah dari root project:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-streamlit run app.py
 ```
 
-## Data architecture
+Windows PowerShell:
 
-`app.py` contains presentation and chart code. `data_access.py` owns the data
-contract, demo repository, schema validation, and repository selection.
-
-The app uses `MockDashboardRepository` by default. This keeps the public demo
-fully populated even if API credentials remain configured. To connect a
-backend:
-
-1. Create a Python module that implements every method in
-   `DashboardRepository`.
-2. Add a zero-argument factory that returns that repository.
-3. Set `DASHBOARD_REPOSITORY_FACTORY` to `module.path:factory_name`.
-4. Put database credentials in environment variables or Streamlit secrets,
-   never in source control.
-
-Example:
-
-```python
-# backend/repository.py
-import os
-import pandas as pd
-
-from data_access import DashboardFilters
-
-
-class SqlDashboardRepository:
-    def __init__(self) -> None:
-        self.database_url = os.environ["DATABASE_URL"]
-
-    def load_filter_options(self) -> dict[str, list[str]]:
-        # Query distinct provinces and cities available to this user.
-        ...
-
-    def load_kpi_data(self, filters: DashboardFilters) -> pd.DataFrame:
-        # Bind filters.province, filters.city, filters.start_date, and
-        # filters.end_date as query parameters. Never concatenate SQL strings.
-        ...
-
-    # Implement the remaining DashboardRepository methods.
-
-
-def create_repository() -> SqlDashboardRepository:
-    return SqlDashboardRepository()
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m streamlit run app.py
 ```
 
-Then configure:
+macOS / Linux:
 
 ```bash
-export DASHBOARD_REPOSITORY_FACTORY=backend.repository:create_repository
-export DATABASE_URL='your-secret-connection-string'
-streamlit run app.py
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run app.py
 ```
 
-Every business-data method receives one immutable `DashboardFilters` object
-containing `province`, `city`, `start_date`, and `end_date`. The Province and
-City selector values come from `load_filter_options()`, allowing the internal
-database to control which locations a user can select.
+Port lokal default paket: **8080**. URL:
 
-Results are cached for five minutes. `validate_frame()` checks required
-DataFrame columns and raises a clear error if the backend contract changes.
-The authoritative method signatures and schemas are in
-[`data_access.py`](data_access.py).
+- Free (default): http://localhost:8080/
+- Free eksplisit: http://localhost:8080/?dashboard=free
+- Advanced: http://localhost:8080/?dashboard=advanced
 
-### Dashboard API
+Jalankan melalui `app.py`, bukan masing-masing file di `dashboards/`.
+Parameter lain seperti `embed=true` dan `embed_options=light_theme` tetap diterima.
+Route tidak dikenal menampilkan error, bukan menjalankan nama file dari URL.
 
-All dashboard sections can use the backend dashboard API. Opt into live API
-mode explicitly so demo deployments do not unexpectedly depend on backend
-availability:
+## Data dan akses
 
-```bash
-export DASHBOARD_DATA_MODE='api'
-export DASHBOARD_API_BASE_URL='https://your-api.example.com'
-export DASHBOARD_USER_ID='019f0000-0000-7000-8000-000000000001'
-export DASHBOARD_API_BEARER_TOKEN='a-current-CEP-access-token'
-streamlit run app.py
-```
+Free memakai mock jika `DASHBOARD_DATA_MODE` tidak diisi atau bernilai `mock`.
+Set `DASHBOARD_DATA_MODE=api` untuk mengaktifkan API asli, dengan konfigurasi
+`DASHBOARD_API_BASE_URL`, `DASHBOARD_USER_ID`, `DASHBOARD_API_TIMEOUT_SECONDS`, dan
+`DASHBOARD_API_BEARER_TOKEN` yang sudah didukung project asal. Integrasi repository
+custom via `DASHBOARD_REPOSITORY_FACTORY` tetap didukung.
 
-When `DASHBOARD_DATA_MODE` is unset or set to `mock`, the app uses its complete
-dummy dataset and ignores API credentials. The dashboard sends
-`POST /api/v1/cep/dashboard/filter-options` with the
-user ID as the first item in `values`, then maps
-`content.vars.filter_options` (or an unwrapped `vars.filter_options`) to the
-Province and City selectors. An optional bearer token can be supplied through
-`DASHBOARD_API_BEARER_TOKEN`; request timeout can be adjusted with
-`DASHBOARD_API_TIMEOUT_SECONDS` (default: 10 seconds).
+Advanced masih memakai lima adapter demo asli. Menggabungkan hosting tidak otomatis
+menghubungkan advanced ke API free. Tidak ada kredensial yang perlu disalin ke kode.
 
-KPI cards use `POST /api/v1/cep/dashboard/kpis`. The request values are
-sent in this exact order: user ID, province, city, ISO start date, and ISO
-end date. The dashboard maps `content.vars.query_out` (or an unwrapped
-`vars.query_out`) to the nine KPI cards.
-
-Campaign Performance uses three more endpoints with the same ordered filter
-values:
-
-- `POST /api/v1/cep/dashboard/campaign-performance/kpis`
-- `POST /api/v1/cep/dashboard/campaign-performance/funnel`
-- `POST /api/v1/cep/dashboard/campaign-performance/redemption-trend`
-
-The dashboard converts the campaign KPI object into card rows, derives funnel
-percentages from the largest returned stage, and calculates each trend point's
-average transaction value as redemption value divided by vouchers redeemed.
-
-Product Performance uses:
-
-- `POST /api/v1/cep/dashboard/product-performance/top-categories`
-- `POST /api/v1/cep/dashboard/product-performance/top-sampled-products`
-- `POST /api/v1/cep/dashboard/product-performance/top-products`
-- `POST /api/v1/cep/dashboard/product-performance/category-overview`
-- `POST /api/v1/cep/dashboard/product-performance/redemption-time`
-- `POST /api/v1/cep/dashboard/product-performance/redemption-channel`
-
-Merchant Performance uses:
-
-- `POST /api/v1/cep/dashboard/merchant-performance/best-outlets`
-- `POST /api/v1/cep/dashboard/merchant-performance/best-campaigns`
-- `POST /api/v1/cep/dashboard/merchant-performance/top-locations`
-
-Customer Insights uses:
-
-- `POST /api/v1/cep/dashboard/customer-insights/consumer-type`
-- `POST /api/v1/cep/dashboard/customer-insights/customer-loyalty`
-- `POST /api/v1/cep/dashboard/customer-insights/redemption-gender`
-- `POST /api/v1/cep/dashboard/customer-insights/age-group`
-
-Every endpoint receives the same ordered filter values. Empty `query_out`
-lists are treated as valid no-data results, so the dashboard remains available
-instead of raising a missing-column exception.
-
-### Required datasets
-
-- KPI: `metric_key`, `value`, `change_pct`, `comparison_label`
-- Campaign metrics: `metric_key`, `value`, `change_pct`, `comparison_label`
-- Campaign funnel: `stage`, `count`, `percentage`, `stage_order`
-- Trend: `period`, `vouchers_redeemed`, `redemption_value`,
-  `average_transaction_value`
-- Channel: `channel`, `redemptions`
-- Category performance: `category`, `redeemed`, `sampling`
-- Sampled and redeemed products: `product`, `count`
-- Category overview: `category`, `vouchers_redeemed`, `redeemed_share`,
-  `redemption_value`, `unique_customers`, `conversion_rate`
-- Hourly redemptions: `hour`, `redemptions`, `time_range`, `selected_label`
-- Outlet, campaign, and location leaderboards: `name`, `redemptions`
-- Customer segments: `segment`, `customers`
-- Gender: `gender`, `percentage`
-- Age groups: `age_group`, `age_range`, `percentage`
-
-The customer loyalty result is a dictionary containing
-`average_transactions` and `repeat_customer_percentage`.
-
-The KPI dataset must return these eight `metric_key` values in any order:
-`active_campaigns`, `completed_campaigns`, `vouchers_claimed`,
-`vouchers_redeemed`, `total_consumers`, `new_consumers`,
-`redemption_rate`, and `redemption_value`.
-
-The Campaign Performance dataset must return `campaign_views`,
-`campaign_clicks`, `click_through_rate`, `claim_rate`,
-`total_vouchers_redeemed`, `total_redemption_value`, and
-`average_transaction_value`. Funnel rows should be ordered using `stage_order`,
-making it safe for the backend to return stages in any database order.
-
-## Secrets
-
-The repository intentionally contains no credentials. Local `.env` files,
-private keys, certificates, and `.streamlit/secrets.toml` are ignored by Git.
-For Streamlit Community Cloud, add production secrets in the app's **Advanced
-settings** or **Secrets** page.
-
-Before publishing future changes, check staged content:
-
-```bash
-git diff --cached
-git grep -nEi '(api[_-]?key|secret|password|token|private[_-]?key)'
-```
+**`dashboard=advanced` adalah pilihan tampilan, bukan bukti hak akses berbayar.**
+Routing ini tidak menambahkan login atau entitlement baru. Sebelum advanced menampilkan
+data terbatas, BE perlu memvalidasi sesi/token dan hak merchant di server. App free
+saat ini memakai `DASHBOARD_USER_ID` dari environment; penggabungan tidak menjadikannya
+multi-tenant. Jangan mengganti identitas dengan user ID mentah dari query string.
+Jika nantinya per-user, pastikan kunci cache juga memuat identitas dan filter yang sah.
 
 ## Deploy
 
-Push the repository to GitHub, then create an app in Streamlit Community Cloud
-using:
+Workflow default meneruskan layanan yang sudah ada:
 
-- Repository: this GitHub repository
-- Branch: `main`
-- Main file path: `app.py`
+- Repo yang disarankan: `merchant-insights-v2` (nama repo dapat tetap demikian).
+- Cloud Run service: `free-merchant-dashboard`.
+- Registry: `anexa-be-repo`, region `asia-southeast2`.
+- Satu image kini berisi kedua dashboard; tidak butuh service advanced terpisah.
 
-Streamlit installs the packages in `requirements.txt`. Each push to `main`
-automatically updates the deployed app.
+Workflow mempertahankan env vars, secrets, IAM, dan runtime service account yang sudah
+ada pada Cloud Run. Nilai `DASHBOARD_*` di GitHub tidak lagi diterapkan ulang pada
+setiap deploy; kelola konfigurasi runtime melalui tim BE/Cloud Run/Secret Manager.
+Lihat [panduan deploy](docs/DEPLOY_ID.md) sebelum commit ke main karena push ke main
+menjalankan deploy otomatis.
 
-Configure these values in the hosting platform's secret/environment settings,
-not in the repository:
+## Test
 
-```toml
-DASHBOARD_DATA_MODE = "mock"
-DASHBOARD_API_BASE_URL = "https://anexa-api-service-735112988988.asia-southeast2.run.app"
-DASHBOARD_USER_ID = "019f0000-0000-7000-8000-000000000001"
-DASHBOARD_API_BEARER_TOKEN = "a-current-CEP-access-token"
-DASHBOARD_API_TIMEOUT_SECONDS = "30"
+```bash
+python -m unittest discover -s tests -v
 ```
 
-For the Tuesday demo, keep `DASHBOARD_DATA_MODE = "mock"`. After the demo,
-change it to `"api"` to reconnect the existing `/api/v1/cep/dashboard/...`
-adapter without changing dashboard presentation code.
-
-The CEP dashboard routes require a current Bearer access token. A missing or
-expired `DASHBOARD_API_BEARER_TOKEN` returns HTTP 401 before the dashboard SQL
-workflow runs. Static short-lived user tokens are suitable only for temporary
-testing; production should use the authentication flow agreed with the backend
-team so tokens can be refreshed or forwarded securely.
-
-After deployment, give the frontend team the public HTTPS dashboard URL. They
-can embed it with an iframe similar to:
-
-```html
-<iframe
-  src="https://your-dashboard-host.example"
-  title="Merchant Insights"
-  width="100%"
-  height="1200"
-  style="border: 0"
-  loading="lazy"
-></iframe>
-```
-
-The environment-based `DASHBOARD_USER_ID` configuration is suitable only for a
-single organization or a demo: every iframe visitor sees that same user's
-dashboard. A multi-tenant production integration must use the web app's logged-
-in session to issue a signed, short-lived embed token containing the authorized
-user/organization ID. The dashboard and backend must validate that token before
-loading data. Do not accept an unsigned `user_id` iframe query parameter,
-because visitors could change it to request another organization's data.
+Test UI memakai Streamlit AppTest dengan data mock. API contract tests memakai respons
+mock, bukan backend produksi. Uji browser iframe, WebSocket dan akses produksi tetap
+perlu dilakukan setelah deploy.

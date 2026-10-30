@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
-from data_access import (
+from services.free_data import (
     ApiDashboardRepository,
     DashboardFilters,
     create_dashboard_repository,
@@ -34,7 +34,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
             end_date=date(2026, 8, 18),
         )
 
-    @patch("data_access.urlopen")
+    @patch("services.free_data.urlopen")
     def test_filter_options_request_and_mapping(self, mock_urlopen):
         mock_urlopen.return_value = FakeResponse(
             {
@@ -59,7 +59,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
         request = requests[0]
         self.assertEqual(
             request.full_url,
-            "https://backend.example/api/v1/partners/dashboard/filter-options",
+            "https://backend.example/api/v1/cep/dashboard/filter-options",
         )
         self.assertEqual(request.method, "POST")
         self.assertEqual(
@@ -74,7 +74,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
             },
         )
 
-    @patch("data_access.urlopen")
+    @patch("services.free_data.urlopen")
     def test_kpi_request_value_order_and_mapping(self, mock_urlopen):
         query_out = [
             {
@@ -102,7 +102,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
         request = mock_urlopen.call_args.args[0]
         self.assertEqual(
             request.full_url,
-            "https://backend.example/api/v1/partners/dashboard/kpis",
+            "https://backend.example/api/v1/cep/dashboard/kpis",
         )
         self.assertEqual(
             json.loads(request.data),
@@ -118,7 +118,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(frame.to_dict("records"), query_out)
 
-    @patch("data_access.urlopen")
+    @patch("services.free_data.urlopen")
     def test_campaign_kpis_and_funnel_mapping(self, mock_urlopen):
         campaign_kpis = {
             "campaign_views": 0,
@@ -155,9 +155,9 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
         self.assertEqual(
             [request.full_url for request in requests],
             [
-                "https://backend.example/api/v1/partners/dashboard/"
+                "https://backend.example/api/v1/cep/dashboard/"
                 "campaign-performance/kpis",
-                "https://backend.example/api/v1/partners/dashboard/"
+                "https://backend.example/api/v1/cep/dashboard/"
                 "campaign-performance/funnel",
             ],
         )
@@ -178,7 +178,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
             [0.0, 0.0, 100.0, 60.0],
         )
 
-    @patch("data_access.urlopen")
+    @patch("services.free_data.urlopen")
     def test_campaign_redemption_trend_mapping(self, mock_urlopen):
         trend = [
             {
@@ -223,12 +223,12 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
         request = requests[0]
         self.assertEqual(
             request.full_url,
-            "https://backend.example/api/v1/partners/dashboard/"
+            "https://backend.example/api/v1/cep/dashboard/"
             "campaign-performance/redemption-trend",
         )
         self.assertEqual(
             requests[1].full_url,
-            "https://backend.example/api/v1/partners/dashboard/"
+            "https://backend.example/api/v1/cep/dashboard/"
             "product-performance/redemption-channel",
         )
         self.assertEqual(trend_frame["period"].tolist(), ["03 Aug", "06 Aug"])
@@ -241,7 +241,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
             [{"channel": "In-store", "redemptions": 3}],
         )
 
-    @patch("data_access.urlopen")
+    @patch("services.free_data.urlopen")
     def test_empty_trend_keeps_required_columns(self, mock_urlopen):
         empty = FakeResponse(
             {"status": 200, "content": {"vars": {"query_out": []}}}
@@ -276,7 +276,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
             ],
         )
 
-    @patch("data_access.urlopen")
+    @patch("services.free_data.urlopen")
     def test_product_merchant_and_customer_api_mapping(self, mock_urlopen):
         payloads = [
             [{"category_name": "Beverages", "redemption_count": 3, "sample_count": 2}],
@@ -357,8 +357,15 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
         self.assertEqual(ages.iloc[0]["age_group"], "25-34")
         self.assertEqual(ages.iloc[0]["age_range"], "")
 
-    def test_factory_selects_api_repository_when_api_config_is_present(self):
+    def test_factory_keeps_mock_mode_when_only_api_url_is_present(self):
+        from services.free_data import MockDashboardRepository
+        env = {"DASHBOARD_API_BASE_URL": "https://backend.example", "DASHBOARD_USER_ID": "user-1"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertIsInstance(create_dashboard_repository(), MockDashboardRepository)
+
+    def test_factory_selects_api_repository_when_api_mode_is_explicit(self):
         env = {
+            "DASHBOARD_DATA_MODE": "api",
             "DASHBOARD_API_BASE_URL": "https://backend.example",
             "DASHBOARD_USER_ID": "user-1",
         }
@@ -370,6 +377,7 @@ class ApiDashboardRepositoryTests(unittest.TestCase):
 
     def test_factory_supports_legacy_partner_id_config(self):
         env = {
+            "DASHBOARD_DATA_MODE": "api",
             "DASHBOARD_API_BASE_URL": "https://backend.example",
             "DASHBOARD_PARTNER_ID": "legacy-user-1",
         }
